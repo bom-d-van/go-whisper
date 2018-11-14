@@ -391,9 +391,6 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 	return whisper, nil
 }
 
-<<<<<<< HEAD
-func (whisper *Whisper) writeHeader() (err error) {
-=======
 func (whisper *Whisper) readCompressedHeader() (err error) {
 	offset := 0
 	b := make([]byte, CompressedMetadataSize)
