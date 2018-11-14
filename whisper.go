@@ -158,7 +158,7 @@ func (whisper *Whisper) fileReadAt(b []byte, off int64) error {
 func Create(path string, retentions Retentions, aggregationMethod AggregationMethod, xFilesFactor float32) (whisper *Whisper, err error) {
 	return CreateWithOptions(path, retentions, aggregationMethod, xFilesFactor, &Options{
 		Sparse: false,
-		FLock: false,
+		FLock:  false,
 	})
 }
 
@@ -521,6 +521,71 @@ func (whisper *Whisper) UpdateMany(points []*TimeSeriesPoint) (err error) {
 func (whisper *Whisper) archiveUpdateMany(archive *archiveInfo, points []*TimeSeriesPoint) error {
 	alignedPoints := alignPoints(archive, points)
 	intervals, packedBlocks := packSequences(archive, alignedPoints)
+
+	baseInterval := whisper.getBaseInterval(archive)
+	if baseInterval == 0 {
+		baseInterval = intervals[0]
+	}
+
+	for i := range intervals {
+		myOffset := archive.PointOffset(baseInterval, intervals[i])
+		bytesBeyond := int(myOffset-archive.End()) + len(packedBlocks[i])
+		if bytesBeyond > 0 {
+			pos := len(packedBlocks[i]) - bytesBeyond
+			err := whisper.fileWriteAt(packedBlocks[i][:pos], myOffset)
+			if err != nil {
+				return err
+			}
+			err = whisper.fileWriteAt(packedBlocks[i][pos:], archive.Offset())
+			if err != nil {
+				return err
+			}
+		} else {
+			err := whisper.fileWriteAt(packedBlocks[i], myOffset)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	higher := archive
+	lowerArchives := whisper.lowerArchives(archive)
+
+	for _, lower := range lowerArchives {
+		seen := make(map[int]bool)
+		propagateFurther := false
+		for _, point := range alignedPoints {
+			interval := point.interval - mod(point.interval, lower.secondsPerPoint)
+			if !seen[interval] {
+				if propagated, err := whisper.propagate(interval, higher, lower); err != nil {
+					panic("Failed to propagate")
+				} else if propagated {
+					propagateFurther = true
+				}
+			}
+		}
+		if !propagateFurther {
+			break
+		}
+		higher = lower
+	}
+	return nil
+}
+
+func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points []*TimeSeriesPoint) error {
+	alignedPoints := alignPoints(archive, points)
+	intervals, packedBlocks := packSequences(archive, alignedPoints)
+
+	// should write to buffer
+	// yes
+	// 	is buffer full
+	// 	yes
+	// 		archive buffer
+	// 	write to buffer
+	// no
+	// 	write to archive
+	//
+	// propagate
 
 	baseInterval := whisper.getBaseInterval(archive)
 	if baseInterval == 0 {
@@ -963,6 +1028,25 @@ func (r retentionsByPrecision) Less(i, j int) bool {
 type archiveInfo struct {
 	Retention
 	offset int
+
+	bufferOffset   int
+	buffer         []byte
+	startTimestamp int
+	startIndex     int
+
+	cblock struct {
+		index          int
+		offset         int
+		size           int
+		crc32          int
+		p0, pn1, pn2   TimeSeriesPoint
+		lastByte       int
+		lastByteBitPos int
+	}
+}
+
+func (a *archiveInfo) nextWritableBlockOffset() int {
+
 }
 
 func (archive *archiveInfo) Offset() int64 {
