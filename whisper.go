@@ -442,23 +442,40 @@ func (whisper *Whisper) readCompressedHeader() (err error) {
 		}
 		var arc archiveInfo
 
-		arc.startTimestamp = unpackInt(b)
-		arc.startIndex = unpackInt(b)
-		arc.offset = unpackInt(b)
-		arc.secondsPerPoint = unpackInt(b)
-		arc.numberOfPoints = unpackInt(b)
-		arc.cblock.index = unpackInt(b)
-		arc.cblock.offset = unpackInt(b)
-		arc.cblock.size = unpackInt(b)
-		arc.cblock.crc32 = unpackInt(b)
-		arc.cblock.p0.Time = unpackInt(b)
-		arc.cblock.p0.Value = unpackFloat64(b)
-		arc.cblock.pn1.Time = unpackInt(b)
-		arc.cblock.pn1.Value = unpackFloat64(b)
-		arc.cblock.pn2.Time = unpackInt(b)
-		arc.cblock.pn2.Value = unpackFloat64(b)
-		arc.cblock.lastByte = unpackInt(b)
-		arc.cblock.lastByteBitPos = unpackInt(b)
+		arc.startTimestamp = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
+		arc.startIndex = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
+		arc.offset = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
+		arc.secondsPerPoint = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
+		arc.numberOfPoints = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
+		arc.cblock.index = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
+		arc.cblock.offset = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
+		arc.cblock.size = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
+		arc.cblock.crc32 = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
+		arc.cblock.p0.Time = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
+		arc.cblock.p0.Value = unpackFloat64(b[offset : offset+Float64Size])
+		offset += Float64Size
+		arc.cblock.pn1.Time = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
+		arc.cblock.pn1.Value = unpackFloat64(b[offset : offset+Float64Size])
+		offset += Float64Size
+		arc.cblock.pn2.Time = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
+		arc.cblock.pn2.Value = unpackFloat64(b[offset : offset+Float64Size])
+		offset += Float64Size
+		arc.cblock.lastByte = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
+		arc.cblock.lastByteBitPos = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
 
 		whisper.archives = append(whisper.archives, arc)
 	}
@@ -1218,8 +1235,10 @@ type archiveInfo struct {
 	Retention
 	offset int
 
-	bufferOffset   int
-	buffer         []byte
+	bufferOffset int
+	buffer       []byte
+	bufferSize   int
+
 	startTimestamp int
 	startIndex     int
 
@@ -1235,6 +1254,12 @@ type archiveInfo struct {
 }
 
 func (a *archiveInfo) nextWritableBlockOffset() int {
+	if a.cblock.offset {
+
+	}
+}
+
+func (a *archiveInfo) getChunks() {
 
 }
 
