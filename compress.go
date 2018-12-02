@@ -8,6 +8,44 @@ import (
 	"math/bits"
 )
 
+var debug bool
+
+// Timestamp:
+// 1. The block header stores the starting time stamp, t−1,
+// which is aligned to a two hour window; the first time
+// stamp, t0, in the block is stored as a delta from t−1 in
+// 14 bits. 1
+// 2. For subsequent time stamps, tn:
+// (a) Calculate the delta of delta:
+// D = (tn − tn−1) − (tn−1 − tn−2)
+// (b) If D is zero, then store a single ‘0’ bit
+// (c) If D is between [-63, 64], store ‘10’ followed by
+// the value (7 bits)
+// (d) If D is between [-255, 256], store ‘110’ followed by
+// the value (9 bits)
+// (e) if D is between [-2047, 2048], store ‘1110’ followed
+// by the value (12 bits)
+// (f) Otherwise store ‘1111’ followed by D using 32 bits
+//
+// Value:
+// 1. The first value is stored with no compression
+// 2. If XOR with the previous is zero (same value), store
+// single ‘0’ bit
+// 3. When XOR is non-zero, calculate the number of leading
+// and trailing zeros in the XOR, store bit ‘1’ followed
+// by either a) or b):
+// 	(a) (Control bit ‘0’) If the block of meaningful bits
+// 	    falls within the block of previous meaningful bits,
+// 	    i.e., there are at least as many leading zeros and
+// 	    as many trailing zeros as with the previous value,
+// 	    use that information for the block position and
+// 	    just store the meaningful XORed value.
+// 	(b) (Control bit ‘1’) Store the length of the number
+// 	    of leading zeros in the next 5 bits, then store the
+// 	    length of the meaningful XORed value in the next
+// 	    6 bits. Finally store the meaningful bits of the
+// 	    XORed value.
+
 // TODO: drop ...dataPoint
 func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written int, left []dataPoint) {
 	// if len(e.points) == 0 {
@@ -109,24 +147,40 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		}
 
 		// pval := float64ToUint64(ps[len(ps)-1].value)
-		pval := math.Float64bits(a.cblock.pn1.value)
+		pn1val := math.Float64bits(a.cblock.pn1.value)
+		pn2val := math.Float64bits(a.cblock.pn2.value)
 		val := math.Float64bits(p.value)
-		if pval == val {
+		pxor := pn1val ^ pn2val
+		xor := pn1val ^ val
+		// if pval == val {
+		if debug {
+			fmt.Printf("value\n")
+		}
+		if xor == 0 {
 			bw.Write(1, 0)
+			if debug {
+				fmt.Printf("\tsame, write 0\n")
+			}
 		} else {
-			plz := bits.LeadingZeros64(pval)
-			lz := bits.LeadingZeros64(val)
-			ptz := bits.TrailingZeros64(pval)
-			tz := bits.TrailingZeros64(val)
-			bits := 64 - lz - tz
+			plz := bits.LeadingZeros64(pxor)
+			lz := bits.LeadingZeros64(xor)
+			ptz := bits.TrailingZeros64(pxor)
+			tz := bits.TrailingZeros64(xor)
+			mlen := 64 - lz - tz // meaningful block size
 			if plz == lz && ptz == tz {
 				bw.Write(2, 2)
-				bw.WriteUint(bits, val>>uint64(tz))
+				bw.WriteUint(mlen, xor>>uint64(tz))
+				if debug {
+					fmt.Printf("\tsame-length meaningful block: %0s\n", dumpBits(2, 2, uint64(mlen), xor>>uint(tz)))
+				}
 			} else {
 				bw.Write(2, 3)
 				bw.WriteUint(5, uint64(lz))
-				bw.WriteUint(6, uint64(bits))
-				bw.WriteUint(bits, val>>uint64(tz))
+				bw.WriteUint(6, uint64(mlen))
+				bw.WriteUint(mlen, xor>>uint64(tz))
+				if debug {
+					fmt.Printf("\tvaried-length meaningful block: %0s\n", dumpBits(2, 3, 5, uint64(lz), 6, uint64(mlen), uint64(mlen), xor>>uint64(tz)))
+				}
 			}
 		}
 
@@ -238,6 +292,8 @@ func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int)
 		dst = append(dst, p)
 	}
 
+	log.Printf("dst = %+v\n", dst)
+
 	var pn1, pn2 *dataPoint = &p, &p
 
 readloop:
@@ -250,24 +306,25 @@ readloop:
 
 		var skip, toRead int
 		switch {
-		case br.Peek(1) == 0:
+		case br.Peek(1) == 0: //  0xxx
 			skip = 0
 			toRead = 1
-		case br.Peek(2) == 2:
+		case br.Peek(2) == 2: //  10xx
 			skip = 2
 			toRead = 7
-		case br.Peek(3) == 6:
+		case br.Peek(3) == 6: //  110x
 			skip = 3
 			toRead = 9
-		case br.Peek(4) == 14:
+		case br.Peek(4) == 14: // 1110
 			skip = 4
 			toRead = 12
-		case br.Peek(4) == 15:
+		case br.Peek(4) == 15: // 1111
 			skip = 4
 			toRead = 32
 		default:
 			start, end, data := br.trailingDebug()
-			return dst, fmt.Errorf("unknown timestamp prefix: %04b around buf[%d-%d] = %08b", br.Peek(4), start, end, data)
+			log.Printf("br.Peek(1) = %+v\n", br.Peek(1))
+			return dst, fmt.Errorf("unknown timestamp prefix: %04b at %d, context[%d-%d] = %08b", br.Peek(4), br.current, start, end, data)
 		}
 
 		br.Read(skip)
@@ -295,25 +352,29 @@ readloop:
 		// pval := ps[len(ps)-1].value
 		pval := pn1.value
 		switch {
-		case br.Peek(1) == 0:
+		case br.Peek(1) == 0: // 0x
 			br.Read(1)
 			p.value = pval
-		case br.Peek(2) == 1:
+		case br.Peek(2) == 2: // 10
 			br.Read(2)
-			lz := bits.LeadingZeros64(math.Float64bits(pval))
-			tz := bits.TrailingZeros64(math.Float64bits(pval))
+			pn2val := pn2.value
+			xor := math.Float64bits(pval) ^ math.Float64bits(pn2val)
+			lz := bits.LeadingZeros64(xor)
+			tz := bits.TrailingZeros64(xor)
 			val := br.Read(64 - lz - tz)
-			p.value = math.Float64frombits(val << uint(tz))
-		case br.Peek(2) == 3:
+			p.value = math.Float64frombits(math.Float64bits(pval) ^ (val << uint(tz)))
+		case br.Peek(2) == 3: // 11
 			br.Read(2)
 			lz := br.Read(5)
 			mlen := br.Read(6)
-			p.value = math.Float64frombits(br.Read(int(mlen)) << uint(64-lz-mlen))
+			p.value = math.Float64frombits(math.Float64bits(pval) ^ (br.Read(int(mlen)) << uint(64-lz-mlen)))
 		}
 
 		if br.badRead {
 			break
 		}
+
+		// log.Printf("p = %+v\n", p)
 
 		pn2 = pn1
 		pn1 = &p
@@ -339,11 +400,11 @@ func (br *BitsReader) trailingDebug() (start, end int, data []byte) {
 	if br.current == 0 {
 		start = 0
 	}
-	end = br.current + 2
+	end = br.current + 1
 	if br.current == len(br.buf) {
-		end = br.current + 1
+		end = br.current
 	}
-	data = br.buf[start:end]
+	data = br.buf[start : end+1]
 	return
 }
 
@@ -352,6 +413,9 @@ func (br *BitsReader) trailingDebug() (start, end int, data []byte) {
 // 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0
 
 func (br *BitsReader) Peek(c int) byte {
+	if br.current >= len(br.buf) {
+		return 0
+	}
 	if br.bitPos >= c {
 		return br.buf[br.current] & (1<<uint(c) - 1)
 	}
@@ -426,4 +490,16 @@ func (br *BitsReader) Read(c int) uint64 {
 		}
 	}
 	return data
+}
+
+func dumpBits(data ...uint64) string {
+	var bw BitsWriter
+	bw.buf = make([]byte, 16)
+	bw.bitPos = 7
+	// to
+	for i := 0; i < len(data); i += 2 {
+		// reflect.ValueOf(data[i]).Uint()
+		bw.WriteUint(int(data[i]), data[i+1])
+	}
+	return fmt.Sprintf("%08b bit_pos(%d)", bw.buf[:bw.index+1], bw.bitPos)
 }

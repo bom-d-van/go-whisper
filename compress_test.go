@@ -100,6 +100,8 @@ func TestBitsReadWrite(t *testing.T) {
 }
 
 func TestBlockReadWrite(t *testing.T) {
+	debug = true
+
 	log.SetFlags(log.Lshortfile)
 	var acv archiveInfo
 	acv.secondsPerPoint = 1
@@ -108,26 +110,31 @@ func TestBlockReadWrite(t *testing.T) {
 	acv.blockSize = acv.numberOfPoints * PointSize
 	buf := make([]byte, acv.numberOfPoints*PointSize)
 	ts := 1543689630
+	var delta int
 	next := func(incs ...int) int {
 		for _, i := range incs {
-			ts += i
+			delta += i
 		}
-		return ts
+		return ts + delta
 	}
-	acv.appendPointsToBlock(buf, []dataPoint{
+	input := []dataPoint{
+		{interval: next(0), value: 0},
 		{interval: next(1), value: 1},
-		{interval: next(1), value: 1},
-		{interval: next(1), value: 1},
-		{interval: next(1), value: 1},
+		{interval: next(1), value: 2},
+		// {interval: next(1), value: 1},
 		// {interval: ts + 3, value: 1},
 		// {interval: next(10), value: 1},
 		// {interval: next(10), value: 1},
 		// {interval: next(10), value: 1},
 		// {interval: next(10), value: 1},
-	}...)
+	}
+
+	acv.appendPointsToBlock(buf, input...)
 	fmt.Printf("%08b\n", buf[:8])
 	fmt.Printf("%08b\n", buf[8:16])
 	fmt.Printf("%08b\n", buf[16:24])
+
+	// fmt.Printf("%08b\n", input[0].Bytes())
 
 	acv.dumpInfo()
 
@@ -137,5 +144,5 @@ func TestBlockReadWrite(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	pretty.Printf("%#v\n", points)
+	pretty.Printf("%# v\n", points)
 }
