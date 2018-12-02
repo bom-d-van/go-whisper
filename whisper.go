@@ -942,15 +942,19 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 	// 	baseInterval = alignedPoints[0].interval
 	// }
 	var baseInterval int
-	if archive.cblock.pn1.interval != 0 {
-		baseInterval = archive.cblock.pn1.interval + archive.secondsPerPoint
+	if archive.hasBuffer() {
+		if interval := unpackInt(archive.buffer); interval != 0 {
+			baseInterval = baseInterval
+		} else {
+			baseInterval = archive.cblock.pn1.interval + archive.secondsPerPoint
+		}
 	}
 
 	for _, dp := range alignedPoints {
 		if archive.hasBuffer() {
 			// TODO: continue
 			offset := dp.interval - baseInterval
-			overflow := offset/archive.secondsPerPoint > archive.bufferSize/PointSize
+			overflow := offset > archive.bufferSize/PointSize
 			if overflow {
 				// flush buffer
 				dps := unpackDataPointsStrict(archive.buffer)
@@ -995,6 +999,8 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 						}
 					}
 				}
+
+				baseInterval = dp.interval
 			}
 
 			copy(archive.buffer[(offset*PointSize)%archive.bufferSize:], dp.Bytes())
@@ -1510,7 +1516,7 @@ type archiveInfo struct {
 
 	blockSize int `meta:"size:4"`
 	// blockCount int // TODO: save
-	cblock blockInfo
+	cblock blockInfo // mostly for quick block write
 
 	blockBuffer      []byte
 	blockDirty       bool
@@ -1534,6 +1540,20 @@ type blockRange struct {
 func (whisper *Whisper) blockOffset(a *archiveInfo, blockIndex int) int {
 	// whisper.
 	return a.offset + blockIndex*a.blockSize
+}
+
+func (archive *archiveInfo) dumpInfo() {
+	fmt.Printf("number_of_points:  %d\n", archive.numberOfPoints)
+	fmt.Printf("seconds_per_point: %d\n", archive.secondsPerPoint)
+	fmt.Printf("block_size:        %d\n", archive.blockSize)
+	fmt.Printf("buffer_size:       %d\n", archive.bufferSize)
+	fmt.Printf("cblock\n")
+	fmt.Printf("  p[0].interval:     %d\n", archive.cblock.p0.interval)
+	fmt.Printf("  p[n-2].interval:   %d\n", archive.cblock.pn2.interval)
+	fmt.Printf("  p[n-1].interval:   %d\n", archive.cblock.pn1.interval)
+	fmt.Printf("  last_byte:         %08b\n", archive.cblock.lastByte)
+	fmt.Printf("  last_byte_offset:  %d\n", archive.cblock.lastByteOffset)
+	fmt.Printf("  last_byte_bit_pos: %d\n", archive.cblock.lastByteBitPos)
 }
 
 // func (a *archiveInfo) nextWritableBlockOffset() int {
