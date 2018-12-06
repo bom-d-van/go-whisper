@@ -99,8 +99,14 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 
 			// binary.BigEndian.PutUint64(buf[:], uint64(p.value))
 			bw.Write(PointSize*8, p.Bytes()...)
-			log.Printf("bw.index = %+v\n", bw.index)
+			// log.Printf("bw.index = %+v\n", bw.index)
 			// bw.index += PointSize
+
+			if debug {
+				fmt.Printf("begin\n")
+				fmt.Printf("%d: %f\n", p.interval, p.value)
+			}
+
 			continue
 		}
 
@@ -118,8 +124,17 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		delta2 = a.cblock.pn1.interval - a.cblock.pn2.interval
 
 		delta := (delta1 - delta2) / a.secondsPerPoint
+
+		if debug {
+			fmt.Printf("%d: %f\n", p.interval, p.value)
+		}
+
 		if delta == 0 {
 			bw.Write(1, 0)
+
+			if debug {
+				fmt.Printf("\tdelta = %d: %0s\n", delta, dumpBits(1, 0))
+			}
 		} else if -63 <= delta && delta <= 64 {
 			bw.Write(2, 2)
 			if delta < 0 {
@@ -127,6 +142,10 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 				delta |= 64
 			}
 			bw.WriteUint(7, uint64(delta))
+
+			if debug {
+				fmt.Printf("\tdelta = %d: %0s\n", delta, dumpBits(2, 2, 7, uint64(delta)))
+			}
 		} else if -255 <= delta && delta <= 256 {
 			bw.Write(3, 6)
 			if delta < 0 {
@@ -134,6 +153,10 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 				delta |= 256
 			}
 			bw.WriteUint(9, uint64(delta))
+
+			if debug {
+				fmt.Printf("\tdelta = %d: %0s\n", delta, dumpBits(3, 6, 9, uint64(delta)))
+			}
 		} else if -2047 <= delta && delta <= 2048 {
 			bw.Write(4, 14)
 			if delta < 0 {
@@ -141,9 +164,17 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 				delta |= 2048
 			}
 			bw.WriteUint(12, uint64(delta))
+
+			if debug {
+				fmt.Printf("\tdelta = %d: %0s\n", delta, dumpBits(4, 14, 12, uint64(delta)))
+			}
 		} else {
 			bw.Write(4, 15)
 			bw.WriteUint(32, uint64(p.interval))
+
+			if debug {
+				fmt.Printf("\tdelta = %d: %0s\n", delta, dumpBits(4, 15, 32, uint64(delta)))
+			}
 		}
 
 		// pval := float64ToUint64(ps[len(ps)-1].value)
@@ -153,9 +184,14 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		pxor := pn1val ^ pn2val
 		xor := pn1val ^ val
 		// if pval == val {
+
 		if debug {
-			fmt.Printf("value\n")
+			fmt.Printf("%f %020x\n", a.cblock.pn2.value, pn2val)
+			fmt.Printf("%f %020x\n", a.cblock.pn1.value, pn1val)
+			fmt.Printf("%f %020x\n", p.value, val)
+			fmt.Printf("pxor: %020x\nxor:  %020x\n", pxor, xor)
 		}
+
 		if xor == 0 {
 			bw.Write(1, 0)
 			if debug {
@@ -217,7 +253,7 @@ func (bw *BitsWriter) WriteUint(lenb int, data uint64) {
 	switch {
 	case lenb <= 8:
 		buf[0] = byte(data)
-		fmt.Printf("-- %08b\n", byte(data))
+		// fmt.Printf("-- %08b\n", byte(data))
 	case lenb <= 16:
 		binary.LittleEndian.PutUint16(buf, uint16(data))
 	case lenb <= 32:
@@ -304,6 +340,8 @@ readloop:
 
 		var p dataPoint
 
+		fmt.Printf("new point %d:\n  br.index = %d/%d br.bitPos = %d byte = %08b peek(1) = %08b peek(2) = %08b peek(3) = %08b peek(4) = %08b\n", len(dst), br.current, len(br.buf), br.bitPos, br.buf[br.current], br.Peek(1), br.Peek(2), br.Peek(3), br.Peek(4))
+
 		var skip, toRead int
 		switch {
 		case br.Peek(1) == 0: //  0xxx
@@ -329,15 +367,28 @@ readloop:
 
 		br.Read(skip)
 		delta := int(br.Read(toRead))
+
+		if debug {
+			// dumpBits(uint64(skip), uint64(skipdata), uint64(toRead), uint64(delta)),
+			fmt.Printf("\tskip = %d toRead = %d delta = %d\n", skip, toRead, delta)
+		}
+
 		switch toRead {
 		case 0:
 			// p.interval = ps[len(ps)-1].interval
+			if debug {
+				fmt.Println("\tended by 0 bits to read")
+			}
 			break readloop
 		case 32:
 			if delta == 0 {
 				break readloop
 			}
 			p.interval = delta
+
+			if debug {
+				fmt.Printf("\tfull interval read: %d\n", delta)
+			}
 		default:
 			// TODO: incorrect
 			if skip > 0 && delta&(1<<uint(toRead-1)) > 0 { // POC: toRead-1
@@ -347,28 +398,49 @@ readloop:
 			delta *= a.secondsPerPoint
 			// p.interval = ps[len(ps)-1].interval + delta
 			p.interval = 2*pn1.interval + delta - pn2.interval
+
+			if debug {
+				fmt.Printf("\tp.interval = 2*%d + %d - %d = %d\n", pn1.interval, delta, pn2.interval, p.interval)
+			}
 		}
 
-		// pval := ps[len(ps)-1].value
-		pval := pn1.value
+		fmt.Printf("  br.index = %d/%d br.bitPos = %d byte = %08b peek(1) = %08b peek(2) = %08b\n", br.current, len(br.buf), br.bitPos, br.buf[br.current], br.Peek(1), br.Peek(2))
+
 		switch {
 		case br.Peek(1) == 0: // 0x
 			br.Read(1)
-			p.value = pval
+			p.value = pn1.value
+
+			if debug {
+				fmt.Printf("\tsame as previous value %020x (%f)\n", math.Float64bits(pn1.value), p.value)
+			}
 		case br.Peek(2) == 2: // 10
 			br.Read(2)
-			pn2val := pn2.value
-			xor := math.Float64bits(pval) ^ math.Float64bits(pn2val)
+			xor := math.Float64bits(pn1.value) ^ math.Float64bits(pn2.value)
 			lz := bits.LeadingZeros64(xor)
 			tz := bits.TrailingZeros64(xor)
 			val := br.Read(64 - lz - tz)
-			p.value = math.Float64frombits(math.Float64bits(pval) ^ (val << uint(tz)))
+			p.value = math.Float64frombits(math.Float64bits(pn1.value) ^ (val << uint(tz)))
+
+			if debug {
+				fmt.Printf("\tsame-length meaningful block\n")
+				fmt.Printf("\txor: %020x val: %020x (%f)\n", val<<uint(tz), math.Float64bits(p.value), p.value)
+			}
 		case br.Peek(2) == 3: // 11
 			br.Read(2)
 			lz := br.Read(5)
 			mlen := br.Read(6)
-			p.value = math.Float64frombits(math.Float64bits(pval) ^ (br.Read(int(mlen)) << uint(64-lz-mlen)))
+			p.value = math.Float64frombits(math.Float64bits(pn1.value) ^ (br.Read(int(mlen)) << uint(64-lz-mlen)))
+
+			if debug {
+				fmt.Printf("\tvaried-length meaningful block\n")
+				fmt.Printf("\txor: %020x val: %020x (%f)\n", br.Read(int(mlen))<<uint(64-lz-mlen), math.Float64bits(p.value), p.value)
+			}
 		}
+
+		// if debug {
+		// 	fmt.Println(a)
+		// }
 
 		if br.badRead {
 			break
@@ -416,8 +488,8 @@ func (br *BitsReader) Peek(c int) byte {
 	if br.current >= len(br.buf) {
 		return 0
 	}
-	if br.bitPos >= c {
-		return br.buf[br.current] & (1<<uint(c) - 1)
+	if br.bitPos+1 >= c {
+		return (br.buf[br.current] & (1<<uint(br.bitPos+1) - 1)) >> uint(br.bitPos+1-c)
 	}
 	if br.current+1 >= len(br.buf) {
 		return 0
@@ -496,10 +568,11 @@ func dumpBits(data ...uint64) string {
 	var bw BitsWriter
 	bw.buf = make([]byte, 16)
 	bw.bitPos = 7
-	// to
+	var l uint64
 	for i := 0; i < len(data); i += 2 {
 		// reflect.ValueOf(data[i]).Uint()
 		bw.WriteUint(int(data[i]), data[i+1])
+		l += data[i]
 	}
-	return fmt.Sprintf("%08b bit_pos(%d)", bw.buf[:bw.index+1], bw.bitPos)
+	return fmt.Sprintf("%08b len(%d) bit_pos(%d)", bw.buf[:bw.index+1], l, bw.bitPos)
 }

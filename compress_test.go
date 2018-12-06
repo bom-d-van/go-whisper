@@ -118,9 +118,9 @@ func TestBlockReadWrite(t *testing.T) {
 		return ts + delta
 	}
 	input := []dataPoint{
-		{interval: next(0), value: 0},
-		{interval: next(1), value: 1},
-		{interval: next(1), value: 2},
+		{interval: next(0), value: 12},
+		{interval: next(1), value: 24},
+		{interval: next(1), value: 15},
 		// {interval: next(1), value: 1},
 		// {interval: ts + 3, value: 1},
 		// {interval: next(10), value: 1},
@@ -140,6 +140,8 @@ func TestBlockReadWrite(t *testing.T) {
 
 	points := make([]dataPoint, 0, 10)
 	log.Printf("acv.cblock.lastByteOffset = %+v\n", acv.cblock.lastByteOffset)
+
+	fmt.Println("read test ---")
 	points, err := acv.readFromBlock(buf, points, ts, ts+60)
 	if err != nil {
 		t.Error(err)
