@@ -99,6 +99,31 @@ func TestBitsReadWrite(t *testing.T) {
 	}
 }
 
+// // +build ignore
+
+// package main
+
+// import "fmt"
+
+// func main() {
+// 	data := 900719925475131
+// 	oldc := 52
+// 	ndata := ((data & (1<<uint(oldc-48) - 1)) << 48) |
+// 		(((data >> uint(oldc-40)) & 0xFF) << 40) |
+// 		(((data >> uint(oldc-32)) & 0xFF) << 32) |
+// 		(((data >> uint(oldc-24)) & 0xFF) << 24) |
+// 		(((data >> uint(oldc-16)) & 0xFF) << 16) |
+// 		(((data >> uint(oldc-8)) & 0xFF) << 8) |
+// 		((data >> uint(oldc-48)) & 0xFF)
+
+// 	fmt.Printf(" data = %064b\n", data)
+// 	fmt.Printf("ndata = %064b\n", ndata)
+// }
+
+// // input:  00110011 00110011 00110011 00110011 00110011 01110011 1011
+
+// // output: 1011 00110011 00110011 00110011 00110011 00110011 01110011
+
 func TestBlockReadWrite(t *testing.T) {
 	debug = true
 

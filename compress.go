@@ -270,6 +270,7 @@ func (bw *BitsWriter) WriteUint(lenb int, data uint64) {
 		panic(fmt.Sprintf("invalid int size: %d", lenb))
 	}
 	fmt.Printf("== %08b\n", buf)
+	fmt.Printf("%064b\n", data)
 	bw.Write(lenb, buf...)
 }
 
@@ -566,7 +567,7 @@ func (br *BitsReader) Read(c int) uint64 {
 		// br.current++
 	}
 
-	log.Printf("c = %d data = %08b\n", oldc, data)
+	log.Printf("c = %d data = %064b\n", oldc, data)
 	// 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0
 	if oldc > 8 {
 		// data = data
