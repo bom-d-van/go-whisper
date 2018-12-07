@@ -326,7 +326,8 @@ func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int)
 	var br BitsReader
 	br.buf = buf // [PointSize:]
 	br.bitPos = 7
-	br.Read(PointSize * 8)
+	// br.Read(PointSize * 8)
+	br.current = PointSize
 
 	p := unpackDataPoint(buf)
 	// ps[0] = &p
@@ -518,6 +519,9 @@ func (br *BitsReader) Peek(c int) byte {
 // }
 
 func (br *BitsReader) Read(c int) uint64 {
+	if c > 64 {
+		panic("BitsReader can't read more than 64 bits")
+	}
 	// var data [8]byte
 	var data uint64
 	// buf := br.buf[br.current:]
@@ -563,37 +567,83 @@ func (br *BitsReader) Read(c int) uint64 {
 	}
 
 	log.Printf("c = %d data = %08b\n", oldc, data)
+	// 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0
 	if oldc > 8 {
 		// data = data
 		switch {
 		case oldc <= 16:
 			// data = uint64(bits.ReverseBytes16(uint16(data)))
 			return ((data & (1<<uint(oldc-8) - 1)) << 8) |
-				(data >> uint(oldc-8))
+				((data >> uint(oldc-8)) & 0xFF)
+		case oldc <= 24:
+			return ((data & (1<<uint(oldc-16) - 1)) << 16) |
+				(((data >> uint(oldc-8)) & 0xFF) << 8) |
+				((data >> uint(oldc-16)) & 0xFF)
 		case oldc <= 32:
 			// data = uint64(bits.ReverseBytes32(uint32(data)))
 			return ((data & (1<<uint(oldc-24) - 1)) << 24) |
-				((data & (1<<uint(oldc-16) - 1)) << 16) |
-				((data & (1<<uint(oldc-8) - 1)) << 8) |
-				(data >> uint(oldc-8))
+				(((data >> uint(oldc-16)) & 0xFF) << 16) |
+				(((data >> uint(oldc-8)) & 0xFF) << 8) |
+				((data >> uint(oldc-24)) & 0xFF)
+		case oldc <= 40:
+			return ((data & (1<<uint(oldc-32) - 1)) << 32) |
+				(((data >> uint(oldc-24)) & 0xFF) << 24) |
+				(((data >> uint(oldc-16)) & 0xFF) << 16) |
+				(((data >> uint(oldc-8)) & 0xFF) << 8) |
+				((data >> uint(oldc-32)) & 0xFF)
+		case oldc <= 48:
+			return ((data & (1<<uint(oldc-40) - 1)) << 40) |
+				(((data >> uint(oldc-32)) & 0xFF) << 32) |
+				(((data >> uint(oldc-24)) & 0xFF) << 24) |
+				(((data >> uint(oldc-16)) & 0xFF) << 16) |
+				(((data >> uint(oldc-8)) & 0xFF) << 8) |
+				((data >> uint(oldc-40)) & 0xFF)
+		case oldc <= 56:
+			return ((data & (1<<uint(oldc-48) - 1)) << 48) |
+				(((data >> uint(oldc-40)) & 0xFF) << 40) |
+				(((data >> uint(oldc-32)) & 0xFF) << 32) |
+				(((data >> uint(oldc-24)) & 0xFF) << 24) |
+				(((data >> uint(oldc-16)) & 0xFF) << 16) |
+				(((data >> uint(oldc-8)) & 0xFF) << 8) |
+				((data >> uint(oldc-48)) & 0xFF)
 		case oldc <= 64:
-			// data = uint64(bits.ReverseBytes64(uint64(data)))
 			return ((data & (1<<uint(oldc-56) - 1)) << 56) |
-				((data & (1<<uint(oldc-48) - 1)) << 48) |
-				((data & (1<<uint(oldc-40) - 1)) << 40) |
-				((data & (1<<uint(oldc-32) - 1)) << 32) |
-				((data & (1<<uint(oldc-24) - 1)) << 24) |
-				((data & (1<<uint(oldc-16) - 1)) << 16) |
-				((data & (1<<uint(oldc-8) - 1)) << 8) |
-				(data >> uint(oldc-8))
+				(((data >> uint(oldc-48)) & 0xFF) << 48) |
+				(((data >> uint(oldc-40)) & 0xFF) << 40) |
+				(((data >> uint(oldc-32)) & 0xFF) << 32) |
+				(((data >> uint(oldc-24)) & 0xFF) << 24) |
+				(((data >> uint(oldc-16)) & 0xFF) << 16) |
+				(((data >> uint(oldc-8)) & 0xFF) << 8) |
+				((data >> uint(oldc-56)) & 0xFF)
 		}
 	}
-	// var ndata uint64
-	// // 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0
-	// for i := oldc; i > 8; i -= 8 {
-	// 	ndata |= data & mask(old-i)
-	// }
 	return data
+
+	// var mask uint64 = 0xff
+	// // var ndata uint64
+	// // 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0
+	// var buf [8]byte
+	// var index uint
+	// for i := oldc; i > 0; i -= 8 {
+	// 	shift := i - 8
+	// 	if shift < 0 {
+	// 		shift = 0
+	// 	}
+	// 	buf[index] = byte(data & (mask << uint(i)) >> uint(shift))
+	// 	index++
+	// }
+	// switch {
+	// case oldc <= 8:
+	// case oldc <= 16:
+	// 	data = uint64(binary.LittleEndian.Uint16(buf[:]))
+	// case oldc <= 32:
+	// 	data = uint64(binary.LittleEndian.Uint32(buf[:]))
+	// case oldc <= 64:
+	// 	data = uint64(binary.LittleEndian.Uint64(buf[:]))
+	// default:
+	// 	panic(fmt.Sprintf("invalid int size: %d", oldc))
+	// }
+	// return data
 }
 
 func dumpBits(data ...uint64) string {
