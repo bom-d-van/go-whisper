@@ -133,7 +133,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			bw.Write(1, 0)
 
 			if debug {
-				fmt.Printf("\tdelta = %d: %0s\n", delta, dumpBits(1, 0))
+				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(1, 0))
 			}
 		} else if -63 <= delta && delta <= 64 {
 			bw.Write(2, 2)
@@ -144,7 +144,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			bw.WriteUint(7, uint64(delta))
 
 			if debug {
-				fmt.Printf("\tdelta = %d: %0s\n", delta, dumpBits(2, 2, 7, uint64(delta)))
+				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(2, 2, 7, uint64(delta)))
 			}
 		} else if -255 <= delta && delta <= 256 {
 			bw.Write(3, 6)
@@ -155,7 +155,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			bw.WriteUint(9, uint64(delta))
 
 			if debug {
-				fmt.Printf("\tdelta = %d: %0s\n", delta, dumpBits(3, 6, 9, uint64(delta)))
+				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(3, 6, 9, uint64(delta)))
 			}
 		} else if -2047 <= delta && delta <= 2048 {
 			bw.Write(4, 14)
@@ -166,14 +166,14 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			bw.WriteUint(12, uint64(delta))
 
 			if debug {
-				fmt.Printf("\tdelta = %d: %0s\n", delta, dumpBits(4, 14, 12, uint64(delta)))
+				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(4, 14, 12, uint64(delta)))
 			}
 		} else {
 			bw.Write(4, 15)
 			bw.WriteUint(32, uint64(p.interval))
 
 			if debug {
-				fmt.Printf("\tdelta = %d: %0s\n", delta, dumpBits(4, 15, 32, uint64(delta)))
+				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(4, 15, 32, uint64(delta)))
 			}
 		}
 
@@ -189,7 +189,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			fmt.Printf("%f %020x\n", a.cblock.pn2.value, pn2val)
 			fmt.Printf("%f %020x\n", a.cblock.pn1.value, pn1val)
 			fmt.Printf("%f %020x\n", p.value, val)
-			fmt.Printf("pxor: %020x\nxor:  %020x\n", pxor, xor)
+			fmt.Printf("pxor: %020x (%064b)\nxor:  %020x (%064b)\n", pxor, pxor, xor, xor)
 		}
 
 		if xor == 0 {
@@ -202,20 +202,24 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			lz := bits.LeadingZeros64(xor)
 			ptz := bits.TrailingZeros64(pxor)
 			tz := bits.TrailingZeros64(xor)
-			mlen := 64 - lz - tz // meaningful block size
-			if plz == lz && ptz == tz {
+			if plz <= lz && ptz <= tz {
+				mlen := 64 - plz - ptz // meaningful block size
 				bw.Write(2, 2)
-				bw.WriteUint(mlen, xor>>uint64(tz))
+				bw.WriteUint(mlen, xor>>uint64(ptz))
 				if debug {
-					fmt.Printf("\tsame-length meaningful block: %0s\n", dumpBits(2, 2, uint64(mlen), xor>>uint(tz)))
+					fmt.Printf("mlen = %d %b\n", mlen, xor>>uint64(ptz))
+					fmt.Printf("\tsame-length meaningful block: %0s\n", dumpBits(2, 2, uint64(mlen), xor>>uint(ptz)))
 				}
 			} else {
+				mlen := 64 - lz - tz // meaningful block size
+
 				bw.Write(2, 3)
 				bw.WriteUint(5, uint64(lz))
 				bw.WriteUint(6, uint64(mlen))
 				bw.WriteUint(mlen, xor>>uint64(tz))
 				if debug {
-					fmt.Printf("\tvaried-length meaningful block: %0s\n", dumpBits(2, 3, 5, uint64(lz), 6, uint64(mlen), uint64(mlen), xor>>uint64(tz)))
+					fmt.Printf("\tvaried-length meaningful block: %0s\n", dumpBits(2, 3, 5, uint64(lz), 6, uint64(mlen)))
+					// , uint64(mlen), xor>>uint64(tz)
 				}
 			}
 		}
@@ -430,11 +434,12 @@ readloop:
 			br.Read(2)
 			lz := br.Read(5)
 			mlen := br.Read(6)
-			p.value = math.Float64frombits(math.Float64bits(pn1.value) ^ (br.Read(int(mlen)) << uint(64-lz-mlen)))
+			xor := br.Read(int(mlen)) << uint(64-lz-mlen)
+			p.value = math.Float64frombits(math.Float64bits(pn1.value) ^ xor)
 
 			if debug {
 				fmt.Printf("\tvaried-length meaningful block\n")
-				fmt.Printf("\txor: %020x val: %020x (%f)\n", br.Read(int(mlen))<<uint(64-lz-mlen), math.Float64bits(p.value), p.value)
+				fmt.Printf("\txor: %020x val: %020x (%f)\n", xor, math.Float64bits(p.value), p.value)
 			}
 		}
 

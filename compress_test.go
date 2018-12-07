@@ -118,21 +118,32 @@ func TestBlockReadWrite(t *testing.T) {
 		return ts + delta
 	}
 	input := []dataPoint{
-		{interval: next(0), value: 12},
-		{interval: next(1), value: 24},
-		{interval: next(1), value: 15},
+		// {interval: next(0), value: 12},
+		// {interval: next(1), value: 24},
+		// {interval: next(1), value: 15},
+
 		// {interval: next(1), value: 1},
 		// {interval: ts + 3, value: 1},
 		// {interval: next(10), value: 1},
 		// {interval: next(10), value: 1},
 		// {interval: next(10), value: 1},
 		// {interval: next(10), value: 1},
+
+		{interval: next(0), value: 15.5},
+		{interval: next(1), value: 14.0625},
+		{interval: next(1), value: 3.25},
+		{interval: next(1), value: 8.625},
+		{interval: next(1), value: 13.1},
 	}
 
-	acv.appendPointsToBlock(buf, input...)
-	fmt.Printf("%08b\n", buf[:8])
-	fmt.Printf("%08b\n", buf[8:16])
-	fmt.Printf("%08b\n", buf[16:24])
+	written, _ := acv.appendPointsToBlock(buf, input...)
+	// fmt.Printf("%08b\n", buf[:8])
+	// fmt.Printf("%08b\n", buf[8:16])
+	// fmt.Printf("%08b\n", buf[16:24])
+
+	for i := 0; i < written; i += 8 {
+		fmt.Printf("%08b\n", buf[i:i+8])
+	}
 
 	// fmt.Printf("%08b\n", input[0].Bytes())
 
