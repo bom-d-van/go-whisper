@@ -207,19 +207,21 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 				bw.Write(2, 2)
 				bw.WriteUint(mlen, xor>>uint64(ptz))
 				if debug {
-					fmt.Printf("mlen = %d %b\n", mlen, xor>>uint64(ptz))
+					// fmt.Printf("mlen = %d %b\n", mlen, xor>>uint64(ptz))
 					fmt.Printf("\tsame-length meaningful block: %0s\n", dumpBits(2, 2, uint64(mlen), xor>>uint(ptz)))
 				}
 			} else {
 				mlen := 64 - lz - tz // meaningful block size
 
+				log.Printf("lz = %+v\n", lz)
+				log.Printf("mlen = %+v\n", mlen)
 				bw.Write(2, 3)
 				bw.WriteUint(5, uint64(lz))
 				bw.WriteUint(6, uint64(mlen))
 				bw.WriteUint(mlen, xor>>uint64(tz))
+				fmt.Printf("xor>>uint64(tz) = %08b\n", xor>>uint64(tz))
 				if debug {
-					fmt.Printf("\tvaried-length meaningful block: %0s\n", dumpBits(2, 3, 5, uint64(lz), 6, uint64(mlen)))
-					// , uint64(mlen), xor>>uint64(tz)
+					fmt.Printf("\tvaried-length meaningful block: %0s\n", dumpBits(2, 3, 5, uint64(lz), 6, uint64(mlen), uint64(mlen), xor>>uint64(tz)))
 				}
 			}
 		}
@@ -267,7 +269,7 @@ func (bw *BitsWriter) WriteUint(lenb int, data uint64) {
 	default:
 		panic(fmt.Sprintf("invalid int size: %d", lenb))
 	}
-	// fmt.Printf("== %08b\n", buf)
+	fmt.Printf("== %08b\n", buf)
 	bw.Write(lenb, buf...)
 }
 
@@ -344,7 +346,7 @@ readloop:
 
 		var p dataPoint
 
-		fmt.Printf("new point %d:\n  br.index = %d/%d br.bitPos = %d byte = %08b peek(1) = %08b peek(2) = %08b peek(3) = %08b peek(4) = %08b\n", len(dst), br.current, len(br.buf), br.bitPos, br.buf[br.current], br.Peek(1), br.Peek(2), br.Peek(3), br.Peek(4))
+		fmt.Printf("new point %d:\n  br.index = %d/%d br.bitPos = %d byte = %08b peek(1) = %08b peek(2) = %08b peek(3) = %08b peek(4) = %08b buf[%d:%d] = %08b\n", len(dst), br.current, len(br.buf), br.bitPos, br.buf[br.current], br.Peek(1), br.Peek(2), br.Peek(3), br.Peek(4), br.current, br.current+8, br.buf[br.current:br.current+8])
 
 		var skip, toRead int
 		switch {
@@ -434,7 +436,11 @@ readloop:
 			br.Read(2)
 			lz := br.Read(5)
 			mlen := br.Read(6)
-			xor := br.Read(int(mlen)) << uint(64-lz-mlen)
+			xor := br.Read(int(mlen))
+			log.Printf("lz = %08b\n", lz)
+			log.Printf("mlen = %08b %d\n", mlen, mlen)
+			log.Printf("xor = %08b\n", xor)
+			xor <<= uint(64 - lz - mlen)
 			p.value = math.Float64frombits(math.Float64bits(pn1.value) ^ xor)
 
 			if debug {
@@ -517,6 +523,7 @@ func (br *BitsReader) Read(c int) uint64 {
 	// buf := br.buf[br.current:]
 	// var read uint
 	oldc := c
+	// var written uint
 	for {
 		if br.badRead = br.current >= len(br.buf); br.badRead || c <= 0 {
 			// data = 0
@@ -555,17 +562,37 @@ func (br *BitsReader) Read(c int) uint64 {
 		// br.current++
 	}
 
+	log.Printf("c = %d data = %08b\n", oldc, data)
 	if oldc > 8 {
 		// data = data
 		switch {
 		case oldc <= 16:
-			data = uint64(bits.ReverseBytes16(uint16(data)))
+			// data = uint64(bits.ReverseBytes16(uint16(data)))
+			return ((data & (1<<uint(oldc-8) - 1)) << 8) |
+				(data >> uint(oldc-8))
 		case oldc <= 32:
-			data = uint64(bits.ReverseBytes32(uint32(data)))
+			// data = uint64(bits.ReverseBytes32(uint32(data)))
+			return ((data & (1<<uint(oldc-24) - 1)) << 24) |
+				((data & (1<<uint(oldc-16) - 1)) << 16) |
+				((data & (1<<uint(oldc-8) - 1)) << 8) |
+				(data >> uint(oldc-8))
 		case oldc <= 64:
-			data = uint64(bits.ReverseBytes64(uint64(data)))
+			// data = uint64(bits.ReverseBytes64(uint64(data)))
+			return ((data & (1<<uint(oldc-56) - 1)) << 56) |
+				((data & (1<<uint(oldc-48) - 1)) << 48) |
+				((data & (1<<uint(oldc-40) - 1)) << 40) |
+				((data & (1<<uint(oldc-32) - 1)) << 32) |
+				((data & (1<<uint(oldc-24) - 1)) << 24) |
+				((data & (1<<uint(oldc-16) - 1)) << 16) |
+				((data & (1<<uint(oldc-8) - 1)) << 8) |
+				(data >> uint(oldc-8))
 		}
 	}
+	// var ndata uint64
+	// // 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0
+	// for i := oldc; i > 8; i -= 8 {
+	// 	ndata |= data & mask(old-i)
+	// }
 	return data
 }
 
