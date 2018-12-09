@@ -4,8 +4,13 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
+	"os"
+	"reflect"
 	"testing"
+	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/kr/pretty"
 )
 
@@ -35,6 +40,7 @@ func TestBitWriter(t *testing.T) {
 func TestBitReader(t *testing.T) {
 	var br BitsReader
 	br.buf = []byte{0xB3, 0x02, 0xFF, 0xFF, 0xFF}
+	// br.buf = []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x08}
 	br.bitPos = 7
 
 	fmt.Printf("%08b\n", br.buf)
@@ -99,42 +105,125 @@ func TestBitsReadWrite(t *testing.T) {
 	}
 }
 
-// // +build ignore
-
-// package main
-
-// import "fmt"
-
-// func main() {
-// 	data := 900719925475131
-// 	oldc := 52
-// 	ndata := ((data & (1<<uint(oldc-48) - 1)) << 48) |
-// 		(((data >> uint(oldc-40)) & 0xFF) << 40) |
-// 		(((data >> uint(oldc-32)) & 0xFF) << 32) |
-// 		(((data >> uint(oldc-24)) & 0xFF) << 24) |
-// 		(((data >> uint(oldc-16)) & 0xFF) << 16) |
-// 		(((data >> uint(oldc-8)) & 0xFF) << 8) |
-// 		((data >> uint(oldc-48)) & 0xFF)
-
-// 	fmt.Printf(" data = %064b\n", data)
-// 	fmt.Printf("ndata = %064b\n", ndata)
-// }
-
-// // input:  00110011 00110011 00110011 00110011 00110011 01110011 1011
-
-// // output: 1011 00110011 00110011 00110011 00110011 00110011 01110011
+func init() {
+	log.SetFlags(log.Lshortfile)
+}
 
 func TestBlockReadWrite(t *testing.T) {
-	debug = true
+	// debug = true
 
-	log.SetFlags(log.Lshortfile)
-	var acv archiveInfo
-	acv.secondsPerPoint = 1
-	acv.numberOfPoints = 64
-	acv.cblock.lastByteBitPos = 7
-	acv.blockSize = acv.numberOfPoints * PointSize
-	buf := make([]byte, acv.numberOfPoints*PointSize)
-	ts := 1543689630
+	for i := 0; i < 1; i++ {
+		var acv archiveInfo
+		acv.secondsPerPoint = 1
+		acv.numberOfPoints = 64
+		acv.cblock.lastByteBitPos = 7
+		acv.blockSize = 64 * PointSize
+
+		ts := 1543689630
+		var delta int
+		next := func(incs ...int) int {
+			for _, i := range incs {
+				delta += i
+			}
+			return ts + delta
+		}
+
+		// input := []dataPoint{
+		// 	{interval: next(0), value: 12},
+		// 	{interval: next(1), value: 24},
+		// 	{interval: next(1), value: 15},
+
+		// 	// // {interval: next(1), value: 1},
+		// 	// // {interval: ts + 3, value: 1},
+
+		// 	{interval: next(10), value: 1},
+		// 	{interval: next(10), value: 2},
+		// 	{interval: next(10), value: 3},
+		// 	{interval: next(10), value: 4},
+
+		// 	{interval: next(10), value: 15.5},
+		// 	{interval: next(11), value: 14.0625},
+		// 	{interval: next(11), value: 3.25},
+		// 	{interval: next(11), value: 8.625},
+		// 	{interval: next(11), value: 13.1},
+		// }
+
+		var input []dataPoint
+		{
+			rand.Seed(time.Now().Unix())
+			input = append(input, dataPoint{interval: next(1), value: 1})
+			input = append(input, dataPoint{interval: next(1), value: 1})
+			input = append(input, dataPoint{interval: next(1), value: 1})
+			for i := 0; i < 200; i++ {
+				// input = append(input, dataPoint{interval: next(rand.Intn(60 * 60)), value: float64(rand.Intn(30))})
+				input = append(input, dataPoint{interval: next(rand.Intn(10)), value: rand.NormFloat64()})
+			}
+		}
+
+		buf := make([]byte, acv.blockSize)
+		written, left := acv.appendPointsToBlock(buf, input...)
+		// fmt.Printf("%08b\n", buf[:8])
+		// fmt.Printf("%08b\n", buf[8:16])
+		// fmt.Printf("%08b\n", buf[16:24])
+
+		// fmt.Printf("%08b\n", input[0].Bytes())
+
+		// log.Printf("written = %+v\n", written)
+		// pretty.Println(left)
+
+		if true {
+			for i := 0; i < written; i += 8 {
+				fmt.Printf("%08b\n", buf[i:i+8])
+			}
+
+			acv.dumpInfo()
+			fmt.Printf("compressd pctl: %.2f%%\n", (float64(acv.cblock.lastByteOffset)/float64(len(input)*PointSize))*100)
+		}
+
+		points := make([]dataPoint, 0, 200)
+
+		if true {
+			log.Printf("acv.cblock.lastByteOffset = %+v\n", acv.cblock.lastByteOffset)
+			fmt.Println("read test ---")
+		}
+
+		points, err := acv.readFromBlock(buf, points, ts, ts+60*60*60)
+		if err != nil {
+			t.Error(err)
+		}
+
+		if !reflect.DeepEqual(input, append(points, left...)) {
+			// pretty.Printf("%# v\n", input)
+			// pretty.Printf("%# v\n", points)
+
+			if diff := cmp.Diff(input, points, cmp.AllowUnexported(dataPoint{})); diff != "" {
+				t.Error(diff)
+			}
+
+			t.FailNow()
+		}
+		// pretty.Printf("%# v\n", input)}
+	}
+}
+
+func TestCompressedWhisperReadWrite(t *testing.T) {
+	fpath := "comp.whisper"
+	os.Remove(fpath)
+	whisper, err := CreateWithOptions(
+		fpath,
+		[]*Retention{
+			{secondsPerPoint: 1, numberOfPoints: 100},
+			// {secondsPerPoint: 20, numberOfPoints: 100},
+		},
+		Sum,
+		0.7,
+		&Options{Compressed: false, PointsPerBlock: 7200},
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	ts := int(time.Now().Add(time.Second * -60).Unix())
 	var delta int
 	next := func(incs ...int) int {
 		for _, i := range incs {
@@ -142,45 +231,41 @@ func TestBlockReadWrite(t *testing.T) {
 		}
 		return ts + delta
 	}
-	input := []dataPoint{
-		// {interval: next(0), value: 12},
-		// {interval: next(1), value: 24},
-		// {interval: next(1), value: 15},
+	input := []*TimeSeriesPoint{
+		{Time: next(0), Value: 12},
+		{Time: next(1), Value: 24},
+		{Time: next(1), Value: 15},
 
-		// {interval: next(1), value: 1},
-		// {interval: ts + 3, value: 1},
-		// {interval: next(10), value: 1},
-		// {interval: next(10), value: 1},
-		// {interval: next(10), value: 1},
-		// {interval: next(10), value: 1},
+		// // {Time: nexV(1), value: 1},
+		// // {Time: ts V 3, value: 1},
 
-		{interval: next(0), value: 15.5},
-		{interval: next(1), value: 14.0625},
-		{interval: next(1), value: 3.25},
-		{interval: next(1), value: 8.625},
-		{interval: next(1), value: 13.1},
+		{Time: next(1), Value: 1},
+		{Time: next(1), Value: 2},
+		{Time: next(10), Value: 3},
+		{Time: next(1), Value: 4},
+
+		{Time: next(1), Value: 15.5},
+		{Time: next(1), Value: 14.0625},
+		{Time: next(1), Value: 3.25},
+		{Time: next(1), Value: 8.625},
+		{Time: next(1), Value: 13.1},
 	}
 
-	written, _ := acv.appendPointsToBlock(buf, input...)
-	// fmt.Printf("%08b\n", buf[:8])
-	// fmt.Printf("%08b\n", buf[8:16])
-	// fmt.Printf("%08b\n", buf[16:24])
-
-	for i := 0; i < written; i += 8 {
-		fmt.Printf("%08b\n", buf[i:i+8])
-	}
-
-	// fmt.Printf("%08b\n", input[0].Bytes())
-
-	acv.dumpInfo()
-
-	points := make([]dataPoint, 0, 10)
-	log.Printf("acv.cblock.lastByteOffset = %+v\n", acv.cblock.lastByteOffset)
-
-	fmt.Println("read test ---")
-	points, err := acv.readFromBlock(buf, points, ts, ts+60)
-	if err != nil {
+	if err := whisper.UpdateMany(input); err != nil {
 		t.Error(err)
 	}
-	pretty.Printf("%# v\n", points)
+	whisper.Close()
+
+	whisper, err = OpenWithOptions(fpath, &Options{Compressed: true, PointsPerBlock: 7200})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// pretty.Println(whisper)
+
+	if ts, err := whisper.Fetch(ts, ts+30); err != nil {
+		t.Error(err)
+	} else {
+		pretty.Println(ts)
+	}
 }

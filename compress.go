@@ -47,6 +47,8 @@ var debug bool
 // 	    XORed value.
 
 // TODO: drop ...dataPoint
+//
+// 7 6 5 4 3 2 1 0
 func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written int, left []dataPoint) {
 	// if len(e.points) == 0 {
 	// 	e.header = ps[0]
@@ -66,14 +68,19 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		a.cblock.lastByteOffset += bw.index
 		written = bw.index + 1
 
+		a.blockRanges[a.cblock.index].start = a.cblock.p0.interval
+		a.blockRanges[a.cblock.index].end = a.cblock.pn1.interval
+
 		// write end-of-block marker if there is enough space
 		bw.WriteUint(4, 0x0f)
 		bw.WriteUint(32, 0)
 	}()
 
-	fmt.Println(bw.index)
-	fmt.Println(a.cblock.lastByteOffset)
-	fmt.Println(a.blockSize)
+	if debug {
+		fmt.Println(bw.index)
+		fmt.Println(a.cblock.lastByteOffset)
+		fmt.Println(a.blockSize)
+	}
 
 	// TODO: clean end-of-block maker
 
@@ -126,16 +133,17 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		delta := (delta1 - delta2) / a.secondsPerPoint
 
 		if debug {
-			fmt.Printf("%d: %f\n", p.interval, p.value)
+			fmt.Printf("%d %d: %v\n", i, p.interval, p.value)
 		}
 
+		// TODO: use two's complement instead to extend delta range?
 		if delta == 0 {
 			bw.Write(1, 0)
 
 			if debug {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(1, 0))
 			}
-		} else if -63 <= delta && delta <= 64 {
+		} else if -63 < delta && delta < 64 {
 			bw.Write(2, 2)
 			if delta < 0 {
 				delta *= -1
@@ -146,7 +154,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			if debug {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(2, 2, 7, uint64(delta)))
 			}
-		} else if -255 <= delta && delta <= 256 {
+		} else if -255 < delta && delta < 256 {
 			bw.Write(3, 6)
 			if delta < 0 {
 				delta *= -1
@@ -157,7 +165,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			if debug {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(3, 6, 9, uint64(delta)))
 			}
-		} else if -2047 <= delta && delta <= 2048 {
+		} else if -2047 < delta && delta < 2048 {
 			bw.Write(4, 14)
 			if delta < 0 {
 				delta *= -1
@@ -186,10 +194,10 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		// if pval == val {
 
 		if debug {
-			fmt.Printf("%f %020x\n", a.cblock.pn2.value, pn2val)
-			fmt.Printf("%f %020x\n", a.cblock.pn1.value, pn1val)
-			fmt.Printf("%f %020x\n", p.value, val)
-			fmt.Printf("pxor: %020x (%064b)\nxor:  %020x (%064b)\n", pxor, pxor, xor, xor)
+			fmt.Printf("  %v %016x\n", a.cblock.pn2.value, pn2val)
+			fmt.Printf("  %v %016x\n", a.cblock.pn1.value, pn1val)
+			fmt.Printf("  %v %016x\n", p.value, val)
+			fmt.Printf("  pxor: %016x (%064b)\n  xor:  %016x (%064b)\n", pxor, pxor, xor, xor)
 		}
 
 		if xor == 0 {
@@ -211,23 +219,37 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 					fmt.Printf("\tsame-length meaningful block: %0s\n", dumpBits(2, 2, uint64(mlen), xor>>uint(ptz)))
 				}
 			} else {
-				mlen := 64 - lz - tz // meaningful block size
+				// TODO: handle if lz >= 1<<5
 
-				log.Printf("lz = %+v\n", lz)
-				log.Printf("mlen = %+v\n", mlen)
+				mlen := 64 - lz - tz // meaningful block size
+				wmlen := mlen
+
+				if mlen == 64 {
+					mlen = 63
+				} else if mlen == 63 {
+					wmlen = 64
+				} else {
+					xor >>= uint64(tz)
+				}
+
+				if debug {
+					log.Printf("lz = %+v\n", lz)
+					log.Printf("mlen = %+v\n", mlen)
+					log.Printf("xor mblock = %08b\n", xor)
+				}
+
 				bw.Write(2, 3)
 				bw.WriteUint(5, uint64(lz))
 				bw.WriteUint(6, uint64(mlen))
-				bw.WriteUint(mlen, xor>>uint64(tz))
-				fmt.Printf("xor>>uint64(tz) = %08b\n", xor>>uint64(tz))
+				bw.WriteUint(wmlen, xor)
 				if debug {
-					fmt.Printf("\tvaried-length meaningful block: %0s\n", dumpBits(2, 3, 5, uint64(lz), 6, uint64(mlen), uint64(mlen), xor>>uint64(tz)))
+					fmt.Printf("\tvaried-length meaningful block: %0s\n", dumpBits(2, 3, 5, uint64(lz), 6, uint64(mlen), uint64(wmlen), xor))
 				}
 			}
 		}
 
 		// TODO: fix it
-		if bw.index+a.cblock.lastByteOffset+1 > a.blockSize {
+		if bw.isFull() || bw.index+a.cblock.lastByteOffset+1 >= a.blockSize {
 			bw.index = oldBwIndex
 			bw.bitPos = oldBwBitPos
 			left = ps[i:]
@@ -269,9 +291,30 @@ func (bw *BitsWriter) WriteUint(lenb int, data uint64) {
 	default:
 		panic(fmt.Sprintf("invalid int size: %d", lenb))
 	}
-	fmt.Printf("== %08b\n", buf)
-	fmt.Printf("%064b\n", data)
+	if debug {
+		fmt.Printf("== %08b\n", buf)
+		log.Printf("lenb = %+v\n", lenb)
+		fmt.Printf("%064b\n", data)
+	}
+
+	// fmt.Printf("\ndata = %064b\n", data)
+
+	// if lenb <= 8 {
+	// 	buf[0] = byte(data)
+	// } else {
+	// 	data = bits.Reverse64(data)
+	// 	binary.BigEndian.PutUint64(buf, data)
+	// }
+
+	// fmt.Printf("== %08b\n", buf)
+	// log.Printf("lenb = %+v\n", lenb)
+	// fmt.Printf("rdata = %064b\n", data)
+
 	bw.Write(lenb, buf...)
+}
+
+func (bw *BitsWriter) isFull() bool {
+	return bw.index+1 >= len(bw.buf)
 }
 
 func mask(l int) uint {
@@ -279,9 +322,19 @@ func mask(l int) uint {
 }
 
 func (bw *BitsWriter) Write(lenb int, data ...byte) {
+	index := bw.index
+	end := bw.index + 5
+	if debug {
+		if end >= len(bw.buf) {
+			end = len(bw.buf) - 1
+		}
+		log.Printf("bw.bitPos = %+v\n", bw.bitPos)
+		log.Printf("bw.buf = %08b\n", bw.buf[bw.index:end])
+	}
+
 	for _, b := range data {
 		// if lenb <= 0 || bw.index > len(bw.buf) || (bw.index == len(bw.buf)-1 && lenb > 8) {
-		if lenb <= 0 || bw.index > len(bw.buf) {
+		if lenb <= 0 || bw.isFull() {
 			break
 		}
 
@@ -314,6 +367,9 @@ func (bw *BitsWriter) Write(lenb int, data ...byte) {
 			bw.bitPos = 7 - left
 		}
 	}
+	if debug {
+		log.Printf("bw.buf = %08b\n", bw.buf[index:end])
+	}
 }
 
 func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int) ([]dataPoint, error) {
@@ -336,7 +392,7 @@ func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int)
 		dst = append(dst, p)
 	}
 
-	log.Printf("dst = %+v\n", dst)
+	// log.Printf("dst = %+v\n", dst)
 
 	var pn1, pn2 *dataPoint = &p, &p
 
@@ -348,7 +404,13 @@ readloop:
 
 		var p dataPoint
 
-		fmt.Printf("new point %d:\n  br.index = %d/%d br.bitPos = %d byte = %08b peek(1) = %08b peek(2) = %08b peek(3) = %08b peek(4) = %08b buf[%d:%d] = %08b\n", len(dst), br.current, len(br.buf), br.bitPos, br.buf[br.current], br.Peek(1), br.Peek(2), br.Peek(3), br.Peek(4), br.current, br.current+8, br.buf[br.current:br.current+8])
+		if debug {
+			end := br.current + 8
+			if end >= len(br.buf) {
+				end = len(br.buf) - 1
+			}
+			fmt.Printf("new point %d:\n  br.index = %d/%d br.bitPos = %d byte = %08b peek(1) = %08b peek(2) = %08b peek(3) = %08b peek(4) = %08b buf[%d:%d] = %08b\n", len(dst), br.current, len(br.buf), br.bitPos, br.buf[br.current], br.Peek(1), br.Peek(2), br.Peek(3), br.Peek(4), br.current, end, br.buf[br.current:end])
+		}
 
 		var skip, toRead int
 		switch {
@@ -369,7 +431,7 @@ readloop:
 			toRead = 32
 		default:
 			start, end, data := br.trailingDebug()
-			log.Printf("br.Peek(1) = %+v\n", br.Peek(1))
+			// log.Printf("br.Peek(1) = %+v\n", br.Peek(1))
 			return dst, fmt.Errorf("unknown timestamp prefix: %04b at %d, context[%d-%d] = %08b", br.Peek(4), br.current, start, end, data)
 		}
 
@@ -412,7 +474,9 @@ readloop:
 			}
 		}
 
-		fmt.Printf("  br.index = %d/%d br.bitPos = %d byte = %08b peek(1) = %08b peek(2) = %08b\n", br.current, len(br.buf), br.bitPos, br.buf[br.current], br.Peek(1), br.Peek(2))
+		if debug {
+			fmt.Printf("  br.index = %d/%d br.bitPos = %d byte = %08b peek(1) = %08b peek(2) = %08b\n", br.current, len(br.buf), br.bitPos, br.buf[br.current], br.Peek(1), br.Peek(2))
+		}
 
 		switch {
 		case br.Peek(1) == 0: // 0x
@@ -420,7 +484,7 @@ readloop:
 			p.value = pn1.value
 
 			if debug {
-				fmt.Printf("\tsame as previous value %020x (%f)\n", math.Float64bits(pn1.value), p.value)
+				fmt.Printf("\tsame as previous value %016x (%f)\n", math.Float64bits(pn1.value), p.value)
 			}
 		case br.Peek(2) == 2: // 10
 			br.Read(2)
@@ -432,22 +496,28 @@ readloop:
 
 			if debug {
 				fmt.Printf("\tsame-length meaningful block\n")
-				fmt.Printf("\txor: %020x val: %020x (%f)\n", val<<uint(tz), math.Float64bits(p.value), p.value)
+				fmt.Printf("\txor: %016x val: %016x (%f)\n", val<<uint(tz), math.Float64bits(p.value), p.value)
 			}
 		case br.Peek(2) == 3: // 11
 			br.Read(2)
 			lz := br.Read(5)
 			mlen := br.Read(6)
-			xor := br.Read(int(mlen))
-			log.Printf("lz = %08b\n", lz)
-			log.Printf("mlen = %08b %d\n", mlen, mlen)
-			log.Printf("xor = %08b\n", xor)
-			xor <<= uint(64 - lz - mlen)
+			rmlen := mlen
+			if mlen == 63 {
+				rmlen = 64
+			}
+			xor := br.Read(int(rmlen))
+			// log.Printf("lz = %08b\n", lz)
+			// log.Printf("mlen = %08b %d\n", mlen, mlen)
+			// log.Printf("xor = %08b\n", xor)
+			if mlen < 63 {
+				xor <<= uint(64 - lz - mlen)
+			}
 			p.value = math.Float64frombits(math.Float64bits(pn1.value) ^ xor)
 
 			if debug {
 				fmt.Printf("\tvaried-length meaningful block\n")
-				fmt.Printf("\txor: %020x val: %020x (%f)\n", xor, math.Float64bits(p.value), p.value)
+				fmt.Printf("\txor: %016x val: %016x (%f)\n", xor, math.Float64bits(p.value), p.value)
 			}
 		}
 
@@ -459,7 +529,7 @@ readloop:
 			break
 		}
 
-		// log.Printf("p = %+v\n", p)
+		log.Printf("p = %+v\n", p)
 
 		pn2 = pn1
 		pn1 = &p
@@ -467,6 +537,9 @@ readloop:
 		// ps = append(ps, &p)
 		if start <= p.interval && p.interval <= end {
 			dst = append(dst, p)
+		}
+		if p.interval >= end {
+			break
 		}
 	}
 
@@ -485,11 +558,11 @@ func (br *BitsReader) trailingDebug() (start, end int, data []byte) {
 	if br.current == 0 {
 		start = 0
 	}
-	end = br.current + 1
-	if br.current == len(br.buf) {
-		end = br.current
+	end = br.current + 2
+	if end >= len(br.buf) {
+		end = len(br.buf)
 	}
-	data = br.buf[start : end+1]
+	data = br.buf[start:end]
 	return
 }
 
@@ -567,58 +640,73 @@ func (br *BitsReader) Read(c int) uint64 {
 		// br.current++
 	}
 
-	log.Printf("c = %d data = %064b\n", oldc, data)
-	// 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0
-	if oldc > 8 {
-		// data = data
-		switch {
-		case oldc <= 16:
-			// data = uint64(bits.ReverseBytes16(uint16(data)))
-			return ((data & (1<<uint(oldc-8) - 1)) << 8) |
-				((data >> uint(oldc-8)) & 0xFF)
-		case oldc <= 24:
-			return ((data & (1<<uint(oldc-16) - 1)) << 16) |
-				(((data >> uint(oldc-8)) & 0xFF) << 8) |
-				((data >> uint(oldc-16)) & 0xFF)
-		case oldc <= 32:
-			// data = uint64(bits.ReverseBytes32(uint32(data)))
-			return ((data & (1<<uint(oldc-24) - 1)) << 24) |
-				(((data >> uint(oldc-16)) & 0xFF) << 16) |
-				(((data >> uint(oldc-8)) & 0xFF) << 8) |
-				((data >> uint(oldc-24)) & 0xFF)
-		case oldc <= 40:
-			return ((data & (1<<uint(oldc-32) - 1)) << 32) |
-				(((data >> uint(oldc-24)) & 0xFF) << 24) |
-				(((data >> uint(oldc-16)) & 0xFF) << 16) |
-				(((data >> uint(oldc-8)) & 0xFF) << 8) |
-				((data >> uint(oldc-32)) & 0xFF)
-		case oldc <= 48:
-			return ((data & (1<<uint(oldc-40) - 1)) << 40) |
-				(((data >> uint(oldc-32)) & 0xFF) << 32) |
-				(((data >> uint(oldc-24)) & 0xFF) << 24) |
-				(((data >> uint(oldc-16)) & 0xFF) << 16) |
-				(((data >> uint(oldc-8)) & 0xFF) << 8) |
-				((data >> uint(oldc-40)) & 0xFF)
-		case oldc <= 56:
-			return ((data & (1<<uint(oldc-48) - 1)) << 48) |
-				(((data >> uint(oldc-40)) & 0xFF) << 40) |
-				(((data >> uint(oldc-32)) & 0xFF) << 32) |
-				(((data >> uint(oldc-24)) & 0xFF) << 24) |
-				(((data >> uint(oldc-16)) & 0xFF) << 16) |
-				(((data >> uint(oldc-8)) & 0xFF) << 8) |
-				((data >> uint(oldc-48)) & 0xFF)
-		case oldc <= 64:
-			return ((data & (1<<uint(oldc-56) - 1)) << 56) |
-				(((data >> uint(oldc-48)) & 0xFF) << 48) |
-				(((data >> uint(oldc-40)) & 0xFF) << 40) |
-				(((data >> uint(oldc-32)) & 0xFF) << 32) |
-				(((data >> uint(oldc-24)) & 0xFF) << 24) |
-				(((data >> uint(oldc-16)) & 0xFF) << 16) |
-				(((data >> uint(oldc-8)) & 0xFF) << 8) |
-				((data >> uint(oldc-56)) & 0xFF)
-		}
+	// // log.Printf("c = %d data = %064b\n", oldc, data)
+	// // 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0
+	// // data = data
+	switch {
+	case oldc <= 8:
+	case oldc <= 16:
+		// // data = uint64(bits.ReverseBytes16(uint16(data)))
+		// return ((data & (1<<uint(oldc-8) - 1)) << 8) |
+		// 	((data >> uint(oldc-8)) & 0xFF)
+		diff := oldc - 8
+		return ((data >> uint(diff)) & 0xFF) |
+			(data&(1<<uint(diff)-1))<<8
+	case oldc <= 24:
+		diff := oldc - 16
+		return ((data >> uint(diff+8)) & 0xFF) |
+			(((data >> uint(diff)) & 0xFF) << 8) |
+			(data&(1<<uint(diff)-1))<<16
+	case oldc <= 32:
+		// data = uint64(bits.ReverseBytes32(uint32(data)))
+		diff := oldc - 24
+		return ((data >> uint(diff+16)) & 0xFF) |
+			(((data >> uint(diff+8)) & 0xFF) << 8) |
+			(((data >> uint(diff)) & 0xFF) << 16) |
+			(data&(1<<uint(diff)-1))<<24
+	case oldc <= 40:
+		diff := oldc - 32
+		return ((data >> uint(diff+24)) & 0xFF) |
+			(((data >> uint(diff+16)) & 0xFF) << 8) |
+			(((data >> uint(diff+8)) & 0xFF) << 16) |
+			(((data >> uint(diff)) & 0xFF) << 24) |
+			(data&(1<<uint(diff)-1))<<32
+	case oldc <= 48:
+		diff := oldc - 40
+		return ((data >> uint(diff+32)) & 0xFF) |
+			(((data >> uint(diff+24)) & 0xFF) << 8) |
+			(((data >> uint(diff+16)) & 0xFF) << 16) |
+			(((data >> uint(diff+8)) & 0xFF) << 24) |
+			(((data >> uint(diff)) & 0xFF) << 32) |
+			(data&(1<<uint(diff)-1))<<40
+	case oldc <= 56:
+		diff := oldc - 48
+		return ((data >> uint(diff+40)) & 0xFF) |
+			(((data >> uint(diff+32)) & 0xFF) << 8) |
+			(((data >> uint(diff+24)) & 0xFF) << 16) |
+			(((data >> uint(diff+16)) & 0xFF) << 24) |
+			(((data >> uint(diff+8)) & 0xFF) << 32) |
+			(((data >> uint(diff)) & 0xFF) << 40) |
+			(data&(1<<uint(diff)-1))<<48
+	case oldc <= 64:
+		diff := oldc - 56
+		return ((data >> uint(diff+48)) & 0xFF) |
+			(((data >> uint(diff+40)) & 0xFF) << 8) |
+			(((data >> uint(diff+32)) & 0xFF) << 16) |
+			(((data >> uint(diff+24)) & 0xFF) << 24) |
+			(((data >> uint(diff+16)) & 0xFF) << 32) |
+			(((data >> uint(diff+8)) & 0xFF) << 40) |
+			(((data >> uint(diff)) & 0xFF) << 48) |
+			(data&(1<<uint(diff)-1))<<56
+	default:
+		panic("read count > 64")
 	}
 	return data
+
+	// log.Printf("-- data %d = %064b\n", oldc, data)
+	// log.Printf("-- rdata %d = %064b\n", oldc, bits.Reverse64(data))
+
+	// return bits.Reverse64(data)
 
 	// var mask uint64 = 0xff
 	// // var ndata uint64
