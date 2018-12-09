@@ -213,7 +213,7 @@ func TestCompressedWhisperReadWrite(t *testing.T) {
 		fpath,
 		[]*Retention{
 			{secondsPerPoint: 1, numberOfPoints: 100},
-			// {secondsPerPoint: 20, numberOfPoints: 100},
+			{secondsPerPoint: 20, numberOfPoints: 100},
 		},
 		Sum,
 		0.7,
@@ -235,15 +235,10 @@ func TestCompressedWhisperReadWrite(t *testing.T) {
 		{Time: next(0), Value: 12},
 		{Time: next(1), Value: 24},
 		{Time: next(1), Value: 15},
-
-		// // {Time: nexV(1), value: 1},
-		// // {Time: ts V 3, value: 1},
-
 		{Time: next(1), Value: 1},
 		{Time: next(1), Value: 2},
 		{Time: next(10), Value: 3},
 		{Time: next(1), Value: 4},
-
 		{Time: next(1), Value: 15.5},
 		{Time: next(1), Value: 14.0625},
 		{Time: next(1), Value: 3.25},

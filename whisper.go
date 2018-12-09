@@ -251,6 +251,12 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 			// offset += retention.numberOfPoints * avgCompressedPointSize
 			// offset += whisper.archives[i].blockSize * whisper.blockCount(whisper.archives[i])
 			offset += whisper.archives[i].blockSize * whisper.archives[i].blockCount()
+
+			if i > 0 {
+				log.Printf("buffer = %+v\n", i)
+				size := whisper.archives[i].secondsPerPoint / whisper.archives[i-1].secondsPerPoint * PointSize
+				whisper.archives[i-1].buffer = make([]byte, size)
+			}
 		} else {
 			offset += retention.Size()
 		}
@@ -448,7 +454,7 @@ func (whisper *Whisper) initMetaInfo() {
 		}
 
 		prevArc := whisper.archives[i-1]
-		prevArc.bufferSize = arc.secondsPerPoint / prevArc.secondsPerPoint * 12
+		prevArc.bufferSize = arc.secondsPerPoint / prevArc.secondsPerPoint * PointSize
 		bufOffset += prevArc.bufferSize
 		prevArc.bufferOffset = bufOffset
 
@@ -691,25 +697,29 @@ func (whisper *Whisper) writeHeaderCompressed() (err error) {
 
 	// write block_range_info and buffer
 	for _, archive := range whisper.archives {
-		log.Printf("archive.blockRanges = %+v\n", archive.blockRanges)
 		for _, bran := range archive.blockRanges {
 			i += packInt(b, bran.start, i)
 			i += packInt(b, bran.end, i)
 		}
+
+		if archive.hasBuffer() {
+			i += copy(b[i:], archive.buffer)
+		}
 	}
+
+	// // write buffer
+	// for _, archive := range whisper.archives {
+	// 	// size := archive.secondsPerPoint / whisper.archives[i].secondsPerPoint * PointSize
+	// 	// if err := allocateDiskSpace(whisper.file, size); err != nil {
+	// 	// 	return err
+	// 	// }
+	// }
 
 	if err := whisper.fileWriteAt(b, 0); err != nil {
 		return err
 	}
 	if _, err := whisper.file.Seek(int64(len(b)), 0); err != nil {
 		return err
-	}
-
-	for i, archive := range whisper.archives[1:] {
-		size := archive.secondsPerPoint / whisper.archives[i].secondsPerPoint * PointSize
-		if err := allocateDiskSpace(whisper.file, size); err != nil {
-			return err
-		}
 	}
 
 	return nil
