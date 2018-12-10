@@ -1126,7 +1126,8 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 	blockBuffer := make([]byte, archive.blockSize)
 
 	log.Printf("archive = %+v\n", archive.secondsPerPoint)
-	log.Printf("dps = %+v\n", dps)
+	log.Println("data mark")
+	pretty.Println(dps)
 	log.Printf("archive.blockSize = %+v\n", archive.blockSize)
 
 	for {
@@ -1142,7 +1143,11 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		log.Printf("left = %+v\n", left)
 
 		// flush block
-		if err := whisper.fileWriteAt(blockBuffer[:size], int64(archive.cblock.lastByteOffset-size+1)); err != nil {
+		end := size + 5
+		if end >= len(blockBuffer) {
+			end = len(blockBuffer) - 1
+		}
+		if err := whisper.fileWriteAt(blockBuffer[:end], int64(archive.cblock.lastByteOffset-size+1)); err != nil {
 			return err
 		}
 
@@ -1150,7 +1155,19 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		b := make([]byte, 200)
 		whisper.file.ReadAt(b, int64(archive.blockOffset(archive.cblock.index)))
 		for i := 8; i < 200; i += 8 {
-			fmt.Printf("%xb\n", b[i-8:i])
+			fmt.Printf("%08b\n", b[i-8:i])
+		}
+		{
+			var dst []dataPoint
+			dst, err := archive.readFromBlock(b, dst, dps[0].interval-100, dps[len(dps)-1].interval+100)
+			if err != nil {
+				panic(err)
+			}
+			pretty.Println(archive.cblock)
+			log.Printf("archive.last_byte = %+v\n", archive.cblock.lastByteOffset-archive.blockOffset(0))
+			log.Println("---------")
+			log.Println("data mark")
+			pretty.Println(dst)
 		}
 
 		if len(left) == 0 {
@@ -1354,7 +1371,9 @@ func (whisper *Whisper) fetchCompressed(start, end int64, archive *archiveInfo) 
 			if err := whisper.fileReadAt(buf, int64(archive.blockOffset(block.index))); err != nil {
 				return nil, fmt.Errorf("fetchCompressed: %s", err)
 			}
-			// log.Printf("buf = %x\n", buf)
+			for i := 8; i < archive.blockSize; i += 8 {
+				fmt.Printf("%08b\n", buf[i-8:i])
+			}
 			// dps = append(dps, ...)
 			var err error
 			dst, err = archive.readFromBlock(buf, dst, int(start), int(end))

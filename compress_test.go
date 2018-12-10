@@ -236,24 +236,30 @@ func TestBlockReadWrite2(t *testing.T) {
 		}
 
 		buf := make([]byte, acv.blockSize)
+		var size int
 		{
 			// written, left :=
-			acv.appendPointsToBlock(buf, input[:1]...)
+			written, _ := acv.appendPointsToBlock(buf, input[:1]...)
 			log.Printf("acv.cblock.lastByteOffset = %+v\n", acv.cblock.lastByteOffset)
 
-			log.Printf("buf = %x\n", buf)
+			size += written
+			log.Printf("buf = %08b\n", buf[:30])
 		}
 		{
 			// written, left :=
-			acv.appendPointsToBlock(buf, input[1:5]...)
+			written, _ := acv.appendPointsToBlock(buf[size-1:], input[1:5]...)
 			log.Printf("acv.cblock.lastByteOffset = %+v\n", acv.cblock.lastByteOffset)
-			log.Printf("buf = %x\n", buf)
+			log.Printf("buf = %08b\n", buf[:30])
+
+			size += written - 1
 		}
 		{
 			// written, left :=
-			acv.appendPointsToBlock(buf, input[5:]...)
+			written, _ := acv.appendPointsToBlock(buf[size-1:], input[5:]...)
 			log.Printf("acv.cblock.lastByteOffset = %+v\n", acv.cblock.lastByteOffset)
-			log.Printf("buf = %x\n", buf)
+			log.Printf("buf = %08b\n", buf[:30])
+
+			size += written - 1
 		}
 
 		log.Printf("buf = %x\n", buf)
@@ -274,6 +280,8 @@ func TestBlockReadWrite2(t *testing.T) {
 			fmt.Println("read test ---")
 		}
 
+		debug = true
+
 		points, err := acv.readFromBlock(buf, points, ts, ts+30)
 		if err != nil {
 			t.Error(err)
@@ -293,7 +301,9 @@ func TestBlockReadWrite2(t *testing.T) {
 	}
 }
 
-func TestCompressedWhisperReadWrite(t *testing.T) {
+func TestCompressedWhisperReadWrite1(t *testing.T) {
+	// debug = true
+
 	fpath := "comp.whisper"
 	os.Remove(fpath)
 	whisper, err := CreateWithOptions(
@@ -311,7 +321,7 @@ func TestCompressedWhisperReadWrite(t *testing.T) {
 	}
 
 	// now = func() time.Time {
-	// 	return time.Unix(1544455899, 0)
+	// 	return time.Unix(1544478201, 0)
 	// }
 
 	ts := int(now().Add(time.Second * -60).Unix())
@@ -335,18 +345,90 @@ func TestCompressedWhisperReadWrite(t *testing.T) {
 		{Time: next(1), Value: 3.25},
 		{Time: next(1), Value: 8.625},
 		{Time: next(1), Value: 13.1},
-		// {Time: 1544455899, Value: 12},
-		// {Time: 1544455900, Value: 24},
-		// {Time: 1544455901, Value: 15},
-		// {Time: 1544455902, Value: 1},
-		// {Time: 1544455903, Value: 2},
-		// {Time: 1544455913, Value: 3},
-		// {Time: 1544455914, Value: 4},
-		// {Time: 1544455915, Value: 15.5},
-		// {Time: 1544455916, Value: 14.0625},
-		// {Time: 1544455917, Value: 3.25},
-		// {Time: 1544455918, Value: 8.625},
-		// {Time: 1544455919, Value: 13.1},
+	}
+
+	if err := whisper.UpdateMany(input); err != nil {
+		t.Error(err)
+	}
+	whisper.Close()
+
+	// pretty.Println(whisper)
+
+	// return
+
+	whisper, err = OpenWithOptions(fpath, &Options{Compressed: true, PointsPerBlock: 7200})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// pretty.Println(whisper)
+
+	log.Printf("ts = %+v\n", ts)
+	log.Printf("ts+30 = %+v\n", ts+30)
+	if ts, err := whisper.Fetch(ts, ts+30); err != nil {
+		t.Error(err)
+	} else {
+		pretty.Println(ts)
+	}
+}
+
+func TestCompressedWhisperReadWrite2(t *testing.T) {
+	// debug = true
+
+	fpath := "comp.whisper"
+	os.Remove(fpath)
+	whisper, err := CreateWithOptions(
+		fpath,
+		[]*Retention{
+			{secondsPerPoint: 1, numberOfPoints: 100},
+			{secondsPerPoint: 5, numberOfPoints: 100},
+		},
+		Sum,
+		0.7,
+		&Options{Compressed: true, PointsPerBlock: 7200},
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	now = func() time.Time {
+		return time.Unix(1544478201, 0)
+	}
+
+	ts := int(now().Add(time.Second * -60).Unix())
+	var delta int
+	next := func(incs ...int) int {
+		for _, i := range incs {
+			delta += i
+		}
+		return ts + delta
+	}
+	_ = next(1)
+	input := []*TimeSeriesPoint{
+		// {Time: next(0), Value: 12},
+		// {Time: next(10), Value: 24},
+		// {Time: next(1), Value: 15},
+		// {Time: next(1), Value: 1},
+		// {Time: next(1), Value: 2},
+		// {Time: next(10), Value: 3},
+		// {Time: next(1), Value: 4},
+		// {Time: next(1), Value: 15.5},
+		// {Time: next(1), Value: 14.0625},
+		// {Time: next(1), Value: 3.25},
+		// {Time: next(1), Value: 8.625},
+		// {Time: next(1), Value: 13.1},
+		{Time: 1544478201, Value: 12},
+		{Time: 1544478211, Value: 24},
+		{Time: 1544478212, Value: 15},
+		{Time: 1544478213, Value: 1},
+		{Time: 1544478214, Value: 2},
+		{Time: 1544478224, Value: 3},
+		{Time: 1544478225, Value: 4},
+		{Time: 1544478226, Value: 15.5},
+		{Time: 1544478227, Value: 14.0625},
+		{Time: 1544478228, Value: 3.25},
+		{Time: 1544478229, Value: 8.625},
+		{Time: 1544478230, Value: 13.1},
 	}
 
 	if err := whisper.UpdateMany(input); err != nil {

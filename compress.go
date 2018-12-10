@@ -82,7 +82,9 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		fmt.Println(a.blockSize)
 	}
 
-	// TODO: clean end-of-block maker
+	// clean possible end-of-block maker
+	bw.buf[0] &= 0xFF ^ (1<<uint(a.cblock.lastByteBitPos+1) - 1)
+	bw.buf[1] = 0
 
 	for i, p := range ps {
 		if p.interval == 0 {
@@ -296,11 +298,12 @@ func (bw *BitsWriter) WriteUint(lenb int, data uint64) {
 	default:
 		panic(fmt.Sprintf("invalid int size: %d", lenb))
 	}
-	if debug {
-		fmt.Printf("== %08b\n", buf)
-		log.Printf("lenb = %+v\n", lenb)
-		fmt.Printf("%064b\n", data)
-	}
+
+	// if debug {
+	// 	fmt.Printf("== %08b\n", buf)
+	// 	log.Printf("lenb = %+v\n", lenb)
+	// 	fmt.Printf("%064b\n", data)
+	// }
 
 	// fmt.Printf("\ndata = %064b\n", data)
 
@@ -329,7 +332,7 @@ func mask(l int) uint {
 func (bw *BitsWriter) Write(lenb int, data ...byte) {
 	index := bw.index
 	end := bw.index + 5
-	if debug {
+	if debug && false {
 		if end >= len(bw.buf) {
 			end = len(bw.buf) - 1
 		}
@@ -372,7 +375,7 @@ func (bw *BitsWriter) Write(lenb int, data ...byte) {
 			bw.bitPos = 7 - left
 		}
 	}
-	if debug {
+	if debug && false {
 		log.Printf("bw.buf = %08b\n", bw.buf[index:end])
 	}
 }
