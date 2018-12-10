@@ -105,14 +105,19 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			// bw.Write(32, buf[:4]...)
 
 			// binary.BigEndian.PutUint64(buf[:], uint64(p.value))
-			bw.Write(PointSize*8, p.Bytes()...)
+
+			// bw.Write(PointSize*8, p.Bytes()...)
+
 			// log.Printf("bw.index = %+v\n", bw.index)
-			// bw.index += PointSize
+			copy(buf, p.Bytes())
+			bw.index += PointSize
 
 			if debug {
 				fmt.Printf("begin\n")
 				fmt.Printf("%d: %f\n", p.interval, p.value)
 			}
+
+			log.Printf("buf = %x\n", buf)
 
 			continue
 		}
@@ -249,7 +254,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		}
 
 		// TODO: fix it
-		if bw.isFull() || bw.index+a.cblock.lastByteOffset+1 >= a.blockSize {
+		if bw.isFull() || bw.index+a.cblock.lastByteOffset+1 >= a.blockOffset(a.cblock.index)+a.blockSize {
 			bw.index = oldBwIndex
 			bw.bitPos = oldBwBitPos
 			left = ps[i:]
@@ -529,7 +534,7 @@ readloop:
 			break
 		}
 
-		log.Printf("p = %+v\n", p)
+		// log.Printf("p = %+v\n", p)
 
 		pn2 = pn1
 		pn1 = &p
