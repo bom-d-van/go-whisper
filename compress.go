@@ -111,7 +111,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			a.cblock.pn1 = p
 			a.cblock.pn2 = p
 
-			log.Printf("a.cblock = %+v\n", a.cblock)
+			// log.Printf("a.cblock = %+v\n", a.cblock)
 
 			// var buf [8]byte
 			// binary.BigEndian.PutUint32(buf[:], uint64(p.interval))
@@ -274,7 +274,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			break
 		}
 
-		log.Printf("a.cblock = %+v\n", a.cblock)
+		// log.Printf("a.cblock = %+v\n", a.cblock)
 		a.cblock.pn2 = a.cblock.pn1
 		a.cblock.pn1 = p
 	}
@@ -408,9 +408,17 @@ func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int)
 
 	p := unpackDataPoint(buf)
 	// ps[0] = &p
+	log.Printf("start <= p.interval && p.interval <= end = %+v\n", start <= p.interval && p.interval <= end)
+	log.Printf("p.interval = %+v\n", p.interval)
+	fmt.Println("start =", start)
+	fmt.Println("end =", end)
+	log.Printf("start <= p.interval = %+v\n", start <= p.interval)
+	log.Printf("p.interval <= end = %+v\n", p.interval <= end)
 	if start <= p.interval && p.interval <= end {
 		dst = append(dst, p)
 	}
+
+	log.Printf("p = %+v\n", p)
 
 	// log.Printf("dst = %+v\n", dst)
 
@@ -419,6 +427,7 @@ func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int)
 readloop:
 	for {
 		if br.current >= len(br.buf) {
+			log.Printf("0 = %+v\n", 1)
 			break
 		}
 
@@ -469,9 +478,11 @@ readloop:
 			if debug {
 				fmt.Println("\tended by 0 bits to read")
 			}
+			log.Printf("2 = %+v\n", 3)
 			break readloop
 		case 32:
 			if delta == 0 {
+				log.Printf("4 = %+v\n", 5)
 				break readloop
 			}
 			p.interval = delta
@@ -546,6 +557,7 @@ readloop:
 		// }
 
 		if br.badRead {
+			log.Printf("6 = %+v\n", 7)
 			break
 		}
 
@@ -559,6 +571,7 @@ readloop:
 			dst = append(dst, p)
 		}
 		if p.interval >= end {
+			log.Printf("8 = %+v\n", 9)
 			break
 		}
 	}

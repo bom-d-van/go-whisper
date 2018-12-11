@@ -1,6 +1,7 @@
 package whisper
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"math"
@@ -320,11 +321,11 @@ func TestCompressedWhisperReadWrite1(t *testing.T) {
 		panic(err)
 	}
 
-	// now = func() time.Time {
+	// Now = func() time.Time {
 	// 	return time.Unix(1544478201, 0)
 	// }
 
-	ts := int(now().Add(time.Second * -60).Unix())
+	ts := int(Now().Add(time.Second * -60).Unix())
 	var delta int
 	next := func(incs ...int) int {
 		for _, i := range incs {
@@ -391,11 +392,11 @@ func TestCompressedWhisperReadWrite2(t *testing.T) {
 		panic(err)
 	}
 
-	now = func() time.Time {
+	Now = func() time.Time {
 		return time.Unix(1544478230, 0)
 	}
 
-	ts := int(now().Unix())
+	ts := int(Now().Unix())
 	// var delta int
 	// next := func(incs ...int) int {
 	// 	for _, i := range incs {
@@ -482,4 +483,129 @@ func TestCompressedWhisperReadWrite2(t *testing.T) {
 	// 	panic(err)
 	// }
 	// log.Printf("dst = %+v\n", dst)
+}
+
+var compressed = flag.Bool("compressed", false, "compressd")
+
+func TestCompressedWhisperReadWrite3(t *testing.T) {
+	// debug = true
+	// flag.Parse()
+
+	// rets, err := ParseRetentionDefs("1s:2d,1m:28d,1h:2y")
+	// if err != nil {
+	// 	t.Fatal(err)
+	// }
+	// pretty.Println(rets)
+
+	fpath := "comp.whisper"
+	os.Remove(fpath)
+	whisper, err := CreateWithOptions(
+		fpath,
+		[]*Retention{
+			{secondsPerPoint: 1, numberOfPoints: 172800},   // 1s:2d
+			{secondsPerPoint: 60, numberOfPoints: 40320},   // 1m:28d
+			{secondsPerPoint: 3600, numberOfPoints: 17520}, // 1h:2y
+		},
+		Sum,
+		0,
+		&Options{Compressed: *compressed, PointsPerBlock: 7200},
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	Now = func() time.Time {
+		return time.Unix(1544478230, 0)
+	}
+
+	// ts := int(Now().Unix())
+	// input := []*TimeSeriesPoint{}
+
+	// 1544478230-24 * 365 * 2*60 = 1543427030
+	// 1543427030-1543427030%3600 = 1543424400
+	// 1517410800
+
+	// 1481403600 - 1544472000
+	//
+	// 1481147030
+	// 1481403600 - 1544472000
+	// 		1544295600
+	{
+		start := Now().Add(time.Hour * -24 * 365 * 2)
+		for i := 0; i < 17520; i++ {
+			if err := whisper.UpdateMany([]*TimeSeriesPoint{{
+				Time:  int(start.Add(time.Duration(i) * time.Hour).Unix()),
+				Value: float64(i),
+			}}); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+
+	// {
+	// 	start := Now().Add(time.Hour * -24 * 28)
+	// 	for i := 0; i < 40320; i++ {
+	// 		if err := whisper.UpdateMany([]*TimeSeriesPoint{{
+	// 			Time:  int(start.Add(time.Duration(i) * time.Minute).Unix()),
+	// 			Value: 2,
+	// 		}}); err != nil {
+	// 			t.Error(err)
+	// 		}
+	// 	}
+	// }
+
+	// {
+	// 	start := Now().Add(time.Hour * -24 * 2)
+	// 	for i := 0; i < 172800; i++ {
+	// 		if err := whisper.UpdateMany([]*TimeSeriesPoint{{
+	// 			Time:  int(start.Add(time.Duration(i) * time.Second).Unix()),
+	// 			Value: 3,
+	// 		}}); err != nil {
+	// 			t.Error(err)
+	// 		}
+	// 	}
+	// }
+	whisper.Close()
+
+	whisper, err = OpenWithOptions(fpath, &Options{Compressed: true, PointsPerBlock: 7200})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pretty.Println(whisper)
+
+	buf := make([]byte, whisper.archives[2].blockSize)
+	n, err := whisper.file.ReadAt(buf, int64(whisper.archives[2].blockOffset(1)))
+	log.Printf("n = %+v\n", n)
+	if err != nil {
+		panic(err)
+	}
+
+	// log.Printf("buf = %0x\n", buf)
+
+	var dst []dataPoint
+	// start := Now().Add(time.Hour * -24 * 365 * 2)
+	// dst, err = whisper.archives[1].readFromBlock(buf, dst, int(start.Add(17520*time.Hour).Unix()), 1544478230+3600)
+	dst, err = whisper.archives[1].readFromBlock(buf, dst, 1517407200, 1544478230+3600)
+	if err != nil {
+		panic(err)
+	}
+	log.Printf("dst = %+v\n", dst[len(dst)-10:])
+
+	// pretty.Println(whisper)
+
+	// log.Printf("ts = %+v\n", ts-30)
+	// log.Printf("ts+30 = %+v\n", ts)
+	// if ts, err := whisper.Fetch(1544478230-310, 1544478230-290); err != nil {
+	// 	t.Error(err)
+	// } else {
+	// 	pretty.Println(ts)
+	// }
+	// {
+	// 	if ts, err := whisper.Fetch(1544478230-30, 1544478230); err != nil {
+	// 		t.Error(err)
+	// 	} else {
+	// 		pretty.Println(ts)
+	// 	}
+	// }
 }
