@@ -68,8 +68,17 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		a.cblock.lastByteOffset += bw.index
 		written = bw.index + 1
 
-		a.blockRanges[a.cblock.index].start = a.cblock.p0.interval
-		a.blockRanges[a.cblock.index].end = a.cblock.pn1.interval
+		// a.blockRanges[a.cblock.index].start = a.cblock.p0.interval
+		// a.blockRanges[a.cblock.index].end = a.cblock.pn1.interval
+
+		for i, block := range a.blockRanges {
+			if a.cblock.index != block.index {
+				continue
+			}
+			a.blockRanges[i].start = a.cblock.p0.interval
+			a.blockRanges[i].end = a.cblock.pn1.interval
+			break
+		}
 
 		// write end-of-block marker if there is enough space
 		bw.WriteUint(4, 0x0f)
@@ -102,6 +111,8 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			a.cblock.pn1 = p
 			a.cblock.pn2 = p
 
+			log.Printf("a.cblock = %+v\n", a.cblock)
+
 			// var buf [8]byte
 			// binary.BigEndian.PutUint32(buf[:], uint64(p.interval))
 			// bw.Write(32, buf[:4]...)
@@ -119,7 +130,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 				fmt.Printf("%d: %f\n", p.interval, p.value)
 			}
 
-			log.Printf("buf = %x\n", buf)
+			// log.Printf("buf = %x\n", buf)
 
 			continue
 		}
@@ -263,6 +274,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			break
 		}
 
+		log.Printf("a.cblock = %+v\n", a.cblock)
 		a.cblock.pn2 = a.cblock.pn1
 		a.cblock.pn1 = p
 	}

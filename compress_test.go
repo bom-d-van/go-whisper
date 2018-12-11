@@ -365,7 +365,7 @@ func TestCompressedWhisperReadWrite1(t *testing.T) {
 
 	log.Printf("ts = %+v\n", ts)
 	log.Printf("ts+30 = %+v\n", ts+30)
-	if ts, err := whisper.Fetch(ts, ts+30); err != nil {
+	if ts, err := whisper.Fetch(ts, ts+300); err != nil {
 		t.Error(err)
 	} else {
 		pretty.Println(ts)
@@ -392,18 +392,18 @@ func TestCompressedWhisperReadWrite2(t *testing.T) {
 	}
 
 	now = func() time.Time {
-		return time.Unix(1544478201, 0)
+		return time.Unix(1544478230, 0)
 	}
 
-	ts := int(now().Add(time.Second * -60).Unix())
-	var delta int
-	next := func(incs ...int) int {
-		for _, i := range incs {
-			delta += i
-		}
-		return ts + delta
-	}
-	_ = next(1)
+	ts := int(now().Unix())
+	// var delta int
+	// next := func(incs ...int) int {
+	// 	for _, i := range incs {
+	// 		delta += i
+	// 	}
+	// 	return ts + delta
+	// }
+	// _ = next(1)
 	input := []*TimeSeriesPoint{
 		// {Time: next(0), Value: 12},
 		// {Time: next(10), Value: 24},
@@ -417,11 +417,15 @@ func TestCompressedWhisperReadWrite2(t *testing.T) {
 		// {Time: next(1), Value: 3.25},
 		// {Time: next(1), Value: 8.625},
 		// {Time: next(1), Value: 13.1},
+		{Time: 1544478230 - 300, Value: 666},
+
 		{Time: 1544478201, Value: 12},
+
 		{Time: 1544478211, Value: 24},
 		{Time: 1544478212, Value: 15},
 		{Time: 1544478213, Value: 1},
 		{Time: 1544478214, Value: 2},
+
 		{Time: 1544478224, Value: 3},
 		{Time: 1544478225, Value: 4},
 		{Time: 1544478226, Value: 15.5},
@@ -431,8 +435,12 @@ func TestCompressedWhisperReadWrite2(t *testing.T) {
 		{Time: 1544478230, Value: 13.1},
 	}
 
-	if err := whisper.UpdateMany(input); err != nil {
-		t.Error(err)
+	for _, p := range input {
+		fmt.Println("")
+		fmt.Println("")
+		if err := whisper.UpdateMany([]*TimeSeriesPoint{p}); err != nil {
+			t.Error(err)
+		}
 	}
 	whisper.Close()
 
@@ -447,11 +455,31 @@ func TestCompressedWhisperReadWrite2(t *testing.T) {
 
 	// pretty.Println(whisper)
 
-	log.Printf("ts = %+v\n", ts)
-	log.Printf("ts+30 = %+v\n", ts+30)
-	if ts, err := whisper.Fetch(ts, ts+30); err != nil {
+	log.Printf("ts = %+v\n", ts-30)
+	log.Printf("ts+30 = %+v\n", ts)
+	if ts, err := whisper.Fetch(1544478230-310, 1544478230-290); err != nil {
 		t.Error(err)
 	} else {
 		pretty.Println(ts)
 	}
+	{
+		if ts, err := whisper.Fetch(1544478230-30, 1544478230); err != nil {
+			t.Error(err)
+		} else {
+			pretty.Println(ts)
+		}
+	}
+	// buf := make([]byte, 200)
+	// n, err := whisper.file.ReadAt(buf, int64(whisper.archives[1].blockOffset(0)))
+	// log.Printf("n = %+v\n", n)
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// var dst []dataPoint
+	// dst, err = whisper.archives[1].readFromBlock(buf, dst, ts, ts+1000)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// log.Printf("dst = %+v\n", dst)
 }

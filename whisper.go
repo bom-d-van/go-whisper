@@ -717,8 +717,8 @@ func (whisper *Whisper) writeHeaderCompressed() (err error) {
 		}
 
 		if archive.hasBuffer() {
-			log.Printf("archive.buffer = %x\n", archive.buffer)
-			log.Printf("i = %+v\n", i)
+			// log.Printf("archive.buffer = %x\n", archive.buffer)
+			// log.Printf("i = %+v\n", i)
 			i += copy(b[i:], archive.buffer)
 		}
 	}
@@ -911,6 +911,10 @@ func (whisper *Whisper) UpdateMany(points []*TimeSeriesPoint) (err error) {
 	var currentPoints []*TimeSeriesPoint
 	for _, archive := range whisper.archives {
 		currentPoints, points = extractPoints(points, now, archive.MaxRetention())
+
+		log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
+		pretty.Println(currentPoints)
+
 		if len(currentPoints) == 0 {
 			continue
 		}
@@ -1024,11 +1028,15 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 	// } else if archive.cblock.pn1.interval > 0 {
 	// 	baseInterval = archive.cblock.pn1.interval + archive.secondsPerPoint
 	// }
+	// log.Printf("archive.cblock.pn1.interval = %+v\n", archive.cblock.pn1.interval)
 	if archive.cblock.pn1.interval != 0 {
 		baseInterval = archive.next.Interval(archive.cblock.pn1.interval) - archive.next.secondsPerPoint
+	} else if dps := unpackDataPointsStrict(archive.buffer); len(dps) > 0 {
+		baseInterval = archive.next.Interval(dps[0].interval) - archive.next.secondsPerPoint
 	}
 
-	pretty.Println(alignedPoints)
+	// log.Println("archiveUpdateManyCompressed")
+	// pretty.Println(alignedPoints)
 
 	bufferPointsCount := archive.next.secondsPerPoint / archive.secondsPerPoint
 	for aindex := 0; aindex < len(alignedPoints); {
@@ -1038,17 +1046,19 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 		}
 		offset := bufferPointsCount - (baseInterval-dp.interval)/archive.secondsPerPoint
 		not_overflow := 0 <= offset && offset < bufferPointsCount
-		log.Printf("baseInterval = %+v\n", baseInterval)
-		log.Printf("dp.interval = %+v\n", dp.interval)
-		log.Printf("offset = %+v\n", offset)
-		log.Printf("not_overflow = %+v\n", not_overflow)
+
+		// log.Printf("baseInterval = %+v\n", baseInterval)
+		// log.Printf("dp.interval = %+v\n", dp.interval)
+		// log.Printf("offset = %+v\n", offset)
+		// log.Printf("not_overflow = %+v\n", not_overflow)
+
 		if not_overflow {
 			aindex++
 			copy(archive.buffer[offset*PointSize:], dp.Bytes())
 			continue
 		}
 
-		log.Printf(" ======= \n")
+		// log.Printf(" ======= \n")
 
 		// reset base interval
 		baseInterval = 0
@@ -1085,6 +1095,8 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 			// TODO: floor or ceil
 			lowerIntervalStart := dps[0].interval - mod(dps[0].interval, lower.secondsPerPoint)
 
+			pretty.Println(dps)
+
 			var knownValues []float64
 			// currentInterval := dps[0].interval
 			for _, dPoint := range dps {
@@ -1094,10 +1106,9 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 				// currentInterval += archive.secondsPerPoint
 			}
 
-			knownPercent := float32(len(dps)) / float32(len(dps))
-			if knownPercent < whisper.xFilesFactor { // check we have enough data points to propagate a value
-				return nil
-			} else {
+			knownPercent := float32(len(knownValues)) / float32(lower.secondsPerPoint/archive.secondsPerPoint)
+			// check we have enough data points to propagate a value
+			if knownPercent >= whisper.xFilesFactor {
 				aggregateValue := aggregate(whisper.aggregationMethod, knownValues)
 				point := dataPoint{lowerIntervalStart, aggregateValue}
 				if err := lower.appendToBlockAndRotate([]dataPoint{point}); err != nil {
@@ -1125,10 +1136,11 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 
 	blockBuffer := make([]byte, archive.blockSize)
 
+	log.Println("appendToBlockAndRotate")
 	log.Printf("archive = %+v\n", archive.secondsPerPoint)
-	log.Println("data mark")
+	// log.Println("data mark")
 	pretty.Println(dps)
-	log.Printf("archive.blockSize = %+v\n", archive.blockSize)
+	// log.Printf("archive.blockSize = %+v\n", archive.blockSize)
 
 	for {
 		// bw.index+a.cblock.lastByteOffset+1 >= a.blockOffset+a.blockSize
@@ -1137,10 +1149,10 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		// archive.blockDirty = true
 		// archive.blockBufferIndex += written - 1
 
-		log.Printf("int64(archive.cblock.lastByteOffset-size+1) = %+v\n", int64(archive.cblock.lastByteOffset-size+1))
-		log.Printf("size = %+v\n", size)
+		// log.Printf("int64(archive.cblock.lastByteOffset-size+1) = %+v\n", int64(archive.cblock.lastByteOffset-size+1))
+		// log.Printf("size = %+v\n", size)
 		log.Printf("blockBuffer[:size] = %08x\n", blockBuffer[:size])
-		log.Printf("left = %+v\n", left)
+		// log.Printf("left = %+v\n", left)
 
 		// flush block
 		end := size + 5
@@ -1151,24 +1163,28 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 			return err
 		}
 
-		log.Printf("archive.cblock.index = %+v\n", archive.secondsPerPoint)
+		// // log.Printf("archive.cblock.index = %+v\n", archive.secondsPerPoint)
 		b := make([]byte, 200)
-		whisper.file.ReadAt(b, int64(archive.blockOffset(archive.cblock.index)))
-		for i := 8; i < 200; i += 8 {
-			fmt.Printf("%08b\n", b[i-8:i])
+		if _, err := whisper.file.ReadAt(b, int64(archive.blockOffset(archive.cblock.index))); err != nil {
+			return err
 		}
-		{
-			var dst []dataPoint
-			dst, err := archive.readFromBlock(b, dst, dps[0].interval-100, dps[len(dps)-1].interval+100)
-			if err != nil {
-				panic(err)
-			}
-			pretty.Println(archive.cblock)
-			log.Printf("archive.last_byte = %+v\n", archive.cblock.lastByteOffset-archive.blockOffset(0))
-			log.Println("---------")
-			log.Println("data mark")
-			pretty.Println(dst)
-		}
+
+		// for i := 8; i < 200; i += 8 {
+		// 	log.Printf("%08b\n", b[i-8:i])
+		// }
+
+		// {
+		// 	var dst []dataPoint
+		// 	dst, err := archive.readFromBlock(b, dst, dps[0].interval-100, dps[len(dps)-1].interval+100)
+		// 	if err != nil {
+		// 		panic(err)
+		// 	}
+		// 	// pretty.Println(archive.cblock)
+		// 	// log.Printf("archive.last_byte = %+v\n", archive.cblock.lastByteOffset-archive.blockOffset(0))
+		// 	// log.Println("---------")
+		// 	// log.Println("data mark")
+		// 	// pretty.Println(dst)
+		// }
 
 		if len(left) == 0 {
 			// // flush block
@@ -1187,8 +1203,8 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		nblock.index = (archive.cblock.index + 1) % len(archive.blockRanges)
 		nblock.lastByteBitPos = 7
 
-		archive.blockRanges[nblock.index].start = left[0].interval
-		archive.blockRanges[nblock.index].end = 0
+		// archive.blockRanges[nblock.index].start = left[0].interval
+		// archive.blockRanges[nblock.index].end = 0
 
 		archive.cblock.lastByteOffset = archive.blockOffset(nblock.index)
 
@@ -1361,9 +1377,12 @@ func (whisper *Whisper) readSeries(start, end int64, archive *archiveInfo) ([]da
 }
 
 func (whisper *Whisper) fetchCompressed(start, end int64, archive *archiveInfo) ([]dataPoint, error) {
+	log.Println("-------- fetchCompressed")
+	log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
 	var dst []dataPoint
 	archive.dumpInfo()
 	for _, block := range archive.blockRanges {
+		log.Printf("block = %+v\n", block)
 		if block.end >= int(start) && int(end) >= block.start {
 			// matchedBlocks = append(matchedBlocks, block)
 			buf := make([]byte, archive.blockSize)
@@ -1371,9 +1390,11 @@ func (whisper *Whisper) fetchCompressed(start, end int64, archive *archiveInfo) 
 			if err := whisper.fileReadAt(buf, int64(archive.blockOffset(block.index))); err != nil {
 				return nil, fmt.Errorf("fetchCompressed: %s", err)
 			}
-			for i := 8; i < archive.blockSize; i += 8 {
-				fmt.Printf("%08b\n", buf[i-8:i])
-			}
+
+			// for i := 8; i < archive.blockSize; i += 8 {
+			// 	fmt.Printf("%08b\n", buf[i-8:i])
+			// }
+
 			// dps = append(dps, ...)
 			var err error
 			dst, err = archive.readFromBlock(buf, dst, int(start), int(end))
@@ -1382,8 +1403,8 @@ func (whisper *Whisper) fetchCompressed(start, end int64, archive *archiveInfo) 
 			}
 		}
 	}
-	log.Printf("----\n")
-	pretty.Println(dst)
+	// log.Printf("----\n")
+	// pretty.Println(dst)
 	if archive.hasBuffer() {
 		// bstart, bend := archive.getBufferRange()
 		// log.Printf("bstart = %+v\n", bstart)
@@ -1397,7 +1418,7 @@ func (whisper *Whisper) fetchCompressed(start, end int64, archive *archiveInfo) 
 		// 	}
 		// }
 		dps := unpackDataPoints(archive.buffer)
-		log.Printf("archive.buffer = %x\n", archive.buffer)
+		// log.Printf("archive.buffer = %x\n", archive.buffer)
 		pretty.Println(dps)
 		for _, p := range dps {
 			if p.interval != 0 && int(start) <= p.interval && p.interval <= int(end) {
@@ -1457,7 +1478,7 @@ func (whisper *Whisper) checkSeriesEmptyAt(start, len int64, fromTime, untilTime
   Calculate the starting time for a whisper db.
 */
 func (whisper *Whisper) StartTime() int {
-	now := int(time.Now().Unix()) // TODO: danger of 2030 something overflow
+	now := int(now().Unix()) // TODO: danger of 2030 something overflow
 	return now - whisper.maxRetention
 }
 
@@ -1465,16 +1486,22 @@ func (whisper *Whisper) StartTime() int {
   Fetch a TimeSeries for a given time span from the file.
 */
 func (whisper *Whisper) Fetch(fromTime, untilTime int) (timeSeries *TimeSeries, err error) {
-	now := int(time.Now().Unix()) // TODO: danger of 2030 something overflow
+	now := int(now().Unix()) // TODO: danger of 2030 something overflow
 	if fromTime > untilTime {
 		return nil, fmt.Errorf("Invalid time interval: from time '%d' is after until time '%d'", fromTime, untilTime)
 	}
 	oldestTime := whisper.StartTime()
 	// range is in the future
+	log.Println("fromTime:", fromTime)
+	log.Println("untilTime:", untilTime)
+	log.Println("now:", now)
+	log.Println("oldestTime:", oldestTime)
+	log.Printf("fromTime > now = %+v\n", fromTime > now)
 	if fromTime > now {
 		return nil, nil
 	}
 	// range is beyond retention
+	log.Printf("untilTime < oldestTime = %+v\n", untilTime < oldestTime)
 	if untilTime < oldestTime {
 		return nil, nil
 	}
@@ -1499,6 +1526,9 @@ func (whisper *Whisper) Fetch(fromTime, untilTime int) (timeSeries *TimeSeries, 
 
 	var series []dataPoint
 	// var err error
+	log.Printf("whisper.compressed = %+v\n", whisper.compressed)
+	log.Println("untilInterval:", untilInterval)
+	log.Println("fromInterval:", fromInterval)
 	if whisper.compressed {
 		series, err = whisper.fetchCompressed(int64(fromInterval), int64(untilInterval), archive)
 
@@ -1518,10 +1548,10 @@ func (whisper *Whisper) Fetch(fromTime, untilTime int) (timeSeries *TimeSeries, 
 		for _, dPoint := range series {
 			// if dPoint.interval > currentInterval {
 			// }
-			log.Printf("(dPoint.interval-fromInterval)/archive.secondsPerPoint = %+v\n", (dPoint.interval-fromInterval)/archive.secondsPerPoint)
-			log.Printf("dPoint.interval = %+v\n", dPoint.interval)
-			log.Printf("fromInterval = %+v\n", fromInterval)
-			log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
+			// log.Printf("(dPoint.interval-fromInterval)/archive.secondsPerPoint = %+v\n", (dPoint.interval-fromInterval)/archive.secondsPerPoint)
+			// log.Printf("dPoint.interval = %+v\n", dPoint.interval)
+			// log.Printf("fromInterval = %+v\n", fromInterval)
+			// log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
 			values[(dPoint.interval-fromInterval)/archive.secondsPerPoint] = dPoint.value
 			// currentInterval = dPoint.interval + step
 		}
@@ -1745,6 +1775,7 @@ func (archive *archiveInfo) dumpInfo() {
 	fmt.Printf("block_size:        %d\n", archive.blockSize)
 	fmt.Printf("buffer_size:       %d\n", archive.bufferSize)
 	fmt.Printf("cblock\n")
+	fmt.Printf("  index:     %d\n", archive.cblock.index)
 	fmt.Printf("  p[0].interval:     %d\n", archive.cblock.p0.interval)
 	fmt.Printf("  p[n-2].interval:   %d\n", archive.cblock.pn2.interval)
 	fmt.Printf("  p[n-1].interval:   %d\n", archive.cblock.pn1.interval)
