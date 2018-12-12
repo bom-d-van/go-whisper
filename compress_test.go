@@ -520,6 +520,12 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 
 	// ts := int(Now().Unix())
 	// input := []*TimeSeriesPoint{}
+	//
+	// 1544478230 - 28 * 24 * 3600 = 1542059030
+	//
+	// 1542059030
+	// 1542060000
+	// 1542062580
 
 	// 1544478230-24 * 365 * 2*60 = 1543427030
 	// 1543427030-1543427030%3600 = 1543424400
@@ -530,14 +536,30 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 	// 1481147030
 	// 1481403600 - 1544472000
 	// 		1544295600
+
+	// {
+	// 	start := Now().Add(time.Hour * -24 * 365 * 2)
+	// 	end := start.Add(time.Duration(17519) * time.Hour).Unix()
+	// 	log.Printf("start = %+v\n", start.Unix())
+	// 	log.Printf("end = %+v\n", end)
+	// 	for i := 0; i < 17520; i++ {
+	// 		if err := whisper.UpdateMany([]*TimeSeriesPoint{{
+	// 			Time:  int(start.Add(time.Duration(i) * time.Hour).Unix()),
+	// 			Value: float64(i),
+	// 			// Value: rand.NormFloat64(),
+	// 		}}); err != nil {
+	// 			t.Error(err)
+	// 		}
+	// 	}
+	// }
+
 	{
-		start := Now().Add(time.Hour * -24 * 365 * 2)
-		end := start.Add(time.Duration(17519) * time.Hour).Unix()
+		start := Now().Add(time.Hour * -24 * 28)
 		log.Printf("start = %+v\n", start.Unix())
-		log.Printf("end = %+v\n", end)
-		for i := 0; i < 17520; i++ {
+		log.Printf("end   = %+v\n", int(start.Add(time.Duration(40319)*time.Minute).Unix()))
+		for i := 0; i < 40320; i++ {
 			if err := whisper.UpdateMany([]*TimeSeriesPoint{{
-				Time:  int(start.Add(time.Duration(i) * time.Hour).Unix()),
+				Time:  int(start.Add(time.Duration(i) * time.Minute).Unix()),
 				Value: float64(i),
 			}}); err != nil {
 				t.Error(err)
@@ -546,23 +568,11 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 	}
 
 	// {
-	// 	start := Now().Add(time.Hour * -24 * 28)
-	// 	for i := 0; i < 40320; i++ {
-	// 		if err := whisper.UpdateMany([]*TimeSeriesPoint{{
-	// 			Time:  int(start.Add(time.Duration(i) * time.Minute).Unix()),
-	// 			Value: 2,
-	// 		}}); err != nil {
-	// 			t.Error(err)
-	// 		}
-	// 	}
-	// }
-
-	// {
 	// 	start := Now().Add(time.Hour * -24 * 2)
 	// 	for i := 0; i < 172800; i++ {
 	// 		if err := whisper.UpdateMany([]*TimeSeriesPoint{{
 	// 			Time:  int(start.Add(time.Duration(i) * time.Second).Unix()),
-	// 			Value: 3,
+	// 			Value: float64(i),
 	// 		}}); err != nil {
 	// 			t.Error(err)
 	// 		}
@@ -570,32 +580,34 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 	// }
 	whisper.Close()
 
-	whisper, err = OpenWithOptions(fpath, &Options{Compressed: true, PointsPerBlock: 7200})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// whisper, err = OpenWithOptions(fpath, &Options{Compressed: true, PointsPerBlock: 7200})
+	// if err != nil {
+	// 	t.Fatal(err)
+	// }
 
-	pretty.Println(whisper)
+	// .archives[2].blockRanges
 
-	buf := make([]byte, whisper.archives[2].blockSize)
-	n, err := whisper.file.ReadAt(buf, int64(whisper.archives[2].blockOffset(1)))
-	log.Printf("n = %+v\n", n)
-	if err != nil {
-		panic(err)
-	}
+	// pretty.Println(whisper)
 
-	// log.Printf("buf = %0x\n", buf)
+	// buf := make([]byte, whisper.archives[2].blockSize)
+	// n, err := whisper.file.ReadAt(buf, int64(whisper.archives[2].blockOffset(1)))
+	// log.Printf("n = %+v\n", n)
+	// if err != nil {
+	// 	panic(err)
+	// }
 
-	var dst []dataPoint
-	// start := Now().Add(time.Hour * -24 * 365 * 2)
-	// dst, err = whisper.archives[1].readFromBlock(buf, dst, int(start.Add(17520*time.Hour).Unix()), 1544478230+3600)
-	dst, err = whisper.archives[1].readFromBlock(buf, dst, 1517407200, 1544478230+3600)
-	if err != nil {
-		panic(err)
-	}
-	log.Printf("len(dst) = %+v\n", len(dst))
-	log.Printf("dst = %+v\n", dst[len(dst)-10:])
-	log.Printf("dst = %+v\n", dst[:10])
+	// // log.Printf("buf = %0x\n", buf)
+
+	// var dst []dataPoint
+	// // start := Now().Add(time.Hour * -24 * 365 * 2)
+	// // dst, err = whisper.archives[1].readFromBlock(buf, dst, int(start.Add(17520*time.Hour).Unix()), 1544478230+3600)
+	// dst, err = whisper.archives[1].readFromBlock(buf, dst, 1517407200, 1544478230+3600)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// log.Printf("len(dst) = %+v\n", len(dst))
+	// log.Printf("dst = %+v\n", dst[len(dst)-10:])
+	// log.Printf("dst = %+v\n", dst[:10])
 
 	// pretty.Println(whisper)
 

@@ -80,12 +80,12 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			break
 		}
 
-		if ps[0].interval > 1544295600 {
-			log.Printf("p = %+v\n", ps[0])
-			log.Printf("a.secondsPerPoint = %+v\n", a.secondsPerPoint)
-			// log.Printf("size = %+v\n", size)
-			// log.Printf("left = %+v\n", left)
-		}
+		// if ps[0].interval > 1544295600 {
+		// 	log.Printf("p = %+v\n", ps[0])
+		// 	log.Printf("a.secondsPerPoint = %+v\n", a.secondsPerPoint)
+		// 	// log.Printf("size = %+v\n", size)
+		// 	// log.Printf("left = %+v\n", left)
+		// }
 
 		// write end-of-block marker if there is enough space
 		bw.WriteUint(4, 0x0f)
@@ -275,11 +275,28 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 
 		// TODO: fix it
 		if bw.isFull() || bw.index+a.cblock.lastByteOffset+1 >= a.blockOffset(a.cblock.index)+a.blockSize {
+			// fmt.Println("")
+			// fmt.Println("")
+			// log.Printf("a.secondsPerPoint = %+v\n", a.secondsPerPoint)
+			// log.Printf("bw.isFull() = %+v\n", bw.isFull())
+			// log.Printf("bw.index+a.cblock.lastByteOffset+1 = %+v\n", bw.index+a.cblock.lastByteOffset+1)
+			// log.Printf("a.blockOffset(a.cblock.index)+a.blockSize = %+v\n", a.blockOffset(a.cblock.index)+a.blockSize)
+
+			// log.Printf("bw.index = %+v\n", bw.index)
+			// log.Printf("a.cblock.lastByteOffset = %+v\n", a.cblock.lastByteOffset)
+			// log.Printf("a.cblock.index = %+v\n", a.cblock.index)
+			// log.Printf("a.blockSize = %+v\n", a.blockSize)
+
+			// log.Printf("p = %+v\n", p)
 			bw.index = oldBwIndex
 			bw.bitPos = oldBwBitPos
 			left = ps[i:]
 			break
 		}
+
+		// if p.interval > 1517858880 {
+		// 	log.Printf("%d dps = %+v\n", a.secondsPerPoint, p)
+		// }
 
 		// log.Printf("a.cblock = %+v\n", a.cblock)
 		a.cblock.pn2 = a.cblock.pn1
@@ -469,10 +486,6 @@ readloop:
 			start, end, data := br.trailingDebug()
 			// log.Printf("br.Peek(1) = %+v\n", br.Peek(1))
 			return dst, fmt.Errorf("unknown timestamp prefix: %04b at %d, context[%d-%d] = %08b", br.Peek(4), br.current, start, end, data)
-		}
-
-		if p.interval > 1517858880 {
-			log.Printf("dps = %+v\n", len(dst))
 		}
 
 		br.Read(skip)

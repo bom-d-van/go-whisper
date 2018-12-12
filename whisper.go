@@ -445,7 +445,7 @@ func (whisper *Whisper) initMetaInfo() {
 	for i, arc := range whisper.archives {
 		// arc.blockSize = whisper.pointsPerBlock * avgCompressedPointSize
 		if arc.cblock.lastByteOffset == 0 {
-			arc.cblock.lastByteOffset = arc.blockOffset(0)
+			arc.cblock.lastByteOffset = arc.blockOffset(arc.cblock.index)
 		}
 		arc.whisper = whisper
 		// arc.blockBuffer = make([]byte, arc.blockSize)
@@ -924,6 +924,8 @@ func (whisper *Whisper) UpdateMany(points []*TimeSeriesPoint) (err error) {
 		if len(currentPoints) == 0 {
 			continue
 		}
+		// log.Printf("currentPoints = %+v\n", currentPoints)
+		// log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
 		// reverse currentPoints
 		reversePoints(currentPoints)
 		if whisper.compressed {
@@ -1035,10 +1037,17 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 	// 	baseInterval = archive.cblock.pn1.interval + archive.secondsPerPoint
 	// }
 	// log.Printf("archive.cblock.pn1.interval = %+v\n", archive.cblock.pn1.interval)
-	if archive.cblock.pn1.interval != 0 {
-		baseInterval = archive.next.Interval(archive.cblock.pn1.interval) - archive.next.secondsPerPoint
-	} else if dps := unpackDataPointsStrict(archive.buffer); len(dps) > 0 {
-		baseInterval = archive.next.Interval(dps[0].interval) - archive.next.secondsPerPoint
+	var baseStragety int
+	_ = baseStragety
+	// if archive.cblock.pn1.interval != 0 {
+	// 	//  - archive.next.secondsPerPoint
+	// 	baseInterval = archive.next.Interval(archive.cblock.pn1.interval)
+	// 	baseStragety = 1
+	// } else
+	if dps := unpackDataPointsStrict(archive.buffer); len(dps) > 0 {
+		//  - archive.next.secondsPerPoint
+		baseInterval = archive.next.Interval(dps[0].interval)
+		baseStragety = 2
 	}
 
 	// log.Println("archiveUpdateManyCompressed")
@@ -1049,15 +1058,33 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 		dp := alignedPoints[aindex]
 		if baseInterval == 0 {
 			baseInterval = archive.next.Interval(dp.interval)
+			baseStragety = 3
 		}
 		offset := bufferPointsCount - (baseInterval-dp.interval)/archive.secondsPerPoint
 		not_overflow := 0 <= offset && offset < bufferPointsCount
+		// if offset == bufferPointsCount {
+		// 	offset = 0
+		// }
+
+		// if dp.interval == 1542060000 || dp.interval == 1542060060 {
+		// 	log.Println("-----")
+		// 	log.Println("-----")
+		// 	log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
+		// 	log.Printf("dp.interval = %+v\n", dp.interval)
+		// 	log.Printf("baseInterval = %+v\n", baseInterval)
+		// 	log.Printf("baseStragety = %+v\n", baseStragety)
+		// 	log.Printf("offset = %+v\n", offset)
+		// 	log.Printf("not_overflow = %+v\n", not_overflow)
+		// 	log.Println("-----")
+		// 	log.Println("-----")
+		// }
 
 		// log.Printf("baseInterval = %+v\n", baseInterval)
 		// log.Printf("dp.interval = %+v\n", dp.interval)
 		// log.Printf("offset = %+v\n", offset)
 		// log.Printf("not_overflow = %+v\n", not_overflow)
 
+		oldBuffer := make([]byte, len(archive.buffer))
 		if not_overflow {
 			aindex++
 			copy(archive.buffer[offset*PointSize:], dp.Bytes())
@@ -1067,6 +1094,8 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 		// log.Printf(" ======= \n")
 
 		// reset base interval
+		oldBaseInterval := baseInterval
+		_ = oldBaseInterval
 		baseInterval = 0
 
 		// flush buffer
@@ -1074,6 +1103,7 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 
 		// reset buffer
 		for i := range archive.buffer {
+			oldBuffer[i] = archive.buffer[i]
 			archive.buffer[i] = 0
 		}
 		// copy(archive.buffer[offset:], dp.Bytes())
@@ -1116,8 +1146,55 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 			// check we have enough data points to propagate a value
 			if knownPercent >= whisper.xFilesFactor {
 				aggregateValue := aggregate(whisper.aggregationMethod, knownValues)
-				point := dataPoint{lowerIntervalStart, aggregateValue}
-				if err := lower.appendToBlockAndRotate([]dataPoint{point}); err != nil {
+				point := &TimeSeriesPoint{lowerIntervalStart, aggregateValue}
+
+				// fmt.Println("")
+				// fmt.Println("")
+				// log.Printf("dps[0].interval = %+v\n", dps[0].interval)
+				// log.Printf("higer.secondsPerPoint = %+v\n", archive.secondsPerPoint)
+				// log.Printf("lower.secondsPerPoint = %+v\n", lower.secondsPerPoint)
+				// log.Printf("point = %+v\n", point)
+				// log.Printf("baseStragety = %+v\n", baseStragety)
+
+				// offset := bufferPointsCount - (oldBaseInterval-dp.interval)/archive.secondsPerPoint
+				// not_overflow := 0 <= offset && offset < bufferPointsCount
+
+				// log.Printf("offset = %+v\n", offset)
+				// log.Printf("not_overflow = %+v\n", not_overflow)
+
+				// log.Printf("bufferPointsCount = %+v\n", bufferPointsCount)
+				// log.Printf("baseInterval = %+v\n", oldBaseInterval)
+				// log.Printf("dp.interval = %+v\n", dp.interval)
+
+				// if aggregateValue == 0 || aggregateValue == 18 {
+				// if aggregateValue == 136 || aggregateValue == 2773 {
+				// 	fmt.Println("")
+				// 	fmt.Println("")
+				// 	fmt.Printf("%08b\n", oldBuffer)
+				// 	log.Printf("dps[0].interval = %+v\n", dps[0].interval)
+				// 	log.Printf("higer.secondsPerPoint = %+v\n", archive.secondsPerPoint)
+				// 	log.Printf("lower.secondsPerPoint = %+v\n", lower.secondsPerPoint)
+				// 	log.Printf("point = %+v\n", point)
+				// 	log.Printf("baseStragety = %+v\n", baseStragety)
+
+				// 	offset := bufferPointsCount - (oldBaseInterval-dp.interval)/archive.secondsPerPoint
+				// 	not_overflow := 0 <= offset && offset < bufferPointsCount
+
+				// 	log.Printf("offset = %+v\n", offset)
+				// 	log.Printf("not_overflow = %+v\n", not_overflow)
+
+				// 	log.Printf("bufferPointsCount = %+v\n", bufferPointsCount)
+				// 	log.Printf("baseInterval = %+v\n", oldBaseInterval)
+				// 	log.Printf("dp.interval = %+v\n", dp.interval)
+
+				// 	log.Printf("higher.secondsPerPoint = %+v\n", archive.secondsPerPoint)
+				// 	log.Printf("lower.secondsPerPoint = %+v\n", lower.secondsPerPoint)
+				// 	log.Printf("series = %+v\n", dps)
+				// 	log.Printf("point = %+v\n", point)
+				// 	// os.Exit(0)
+				// }
+
+				if err := whisper.archiveUpdateManyCompressed(lower, []*TimeSeriesPoint{point}); err != nil {
 					return err
 				}
 			}
@@ -1129,8 +1206,8 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 }
 
 func (whisper *Whisper) getNextArchive(higher *archiveInfo) *archiveInfo {
-	for i, archive := range whisper.archives {
-		if archive == higher && i < len(whisper.archives) {
+	for i, archive := range whisper.archives[:len(whisper.archives)-1] {
+		if archive == higher {
 			return whisper.archives[i+1]
 		}
 	}
@@ -1210,11 +1287,11 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 
 		// archive.blockBufferIndex = 0
 
-		log.Println("(archive.cblock.index + 1) % len(archive.blockRanges):", (archive.cblock.index+1)%len(archive.blockRanges))
-		log.Println("(archive.cblock.index + 1):", (archive.cblock.index + 1))
-		log.Println("len(archive.blockRanges):", len(archive.blockRanges))
+		// log.Println("(archive.cblock.index + 1) % len(archive.blockRanges):", (archive.cblock.index+1)%len(archive.blockRanges))
+		// log.Println("(archive.cblock.index + 1):", (archive.cblock.index + 1))
+		// log.Println("len(archive.blockRanges):", len(archive.blockRanges))
 
-		archive.blockRanges[archive.cblock.index].end = archive.cblock.pn1.interval
+		// archive.blockRanges[archive.cblock.index].end = archive.cblock.pn1.interval
 		var nblock blockInfo
 		nblock.index = (archive.cblock.index + 1) % len(archive.blockRanges)
 		nblock.lastByteBitPos = 7
@@ -1223,6 +1300,14 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		// archive.blockRanges[nblock.index].start = left[0].interval
 		// archive.blockRanges[nblock.index].end = 0
 		archive.cblock = nblock
+
+		for i, b := range archive.blockRanges {
+			if b.index == nblock.index {
+				archive.blockRanges[i].start = 0
+				archive.blockRanges[i].end = 0
+				break
+			}
+		}
 
 		// archive.initBlockRanges()
 
@@ -1358,6 +1443,13 @@ func (whisper *Whisper) propagate(timestamp int, higher, lower *archiveInfo) (bo
 	} else {
 		aggregateValue := aggregate(whisper.aggregationMethod, knownValues)
 		point := dataPoint{lowerIntervalStart, aggregateValue}
+		// if aggregateValue == 2790 {
+		// 	log.Printf("higher.secondsPerPoint = %+v\n", higher.secondsPerPoint)
+		// 	log.Printf("lower.secondsPerPoint = %+v\n", lower.secondsPerPoint)
+		// 	log.Printf("series = %+v\n", series)
+		// 	log.Printf("point = %+v\n", point)
+		// 	os.Exit(0)
+		// }
 		if _, err := whisper.file.WriteAt(point.Bytes(), whisper.getPointOffset(lowerIntervalStart, lower)); err != nil {
 			return false, err
 		}
@@ -1522,12 +1614,12 @@ func (whisper *Whisper) Fetch(fromTime, untilTime int) (timeSeries *TimeSeries, 
 	if untilTime < oldestTime {
 		return nil, nil
 	}
-	// if fromTime < oldestTime {
-	// 	fromTime = oldestTime
-	// }
-	// if untilTime > now {
-	// 	untilTime = now
-	// }
+	if fromTime < oldestTime {
+		fromTime = oldestTime
+	}
+	if untilTime > now {
+		untilTime = now
+	}
 
 	// TODO: improve this algorithm it's ugly
 	diff := now - fromTime
@@ -1553,9 +1645,11 @@ func (whisper *Whisper) Fetch(fromTime, untilTime int) (timeSeries *TimeSeries, 
 			return nil, err
 		}
 
+		// log.Printf("series = %+v\n", series)
+
 		irange := untilInterval - fromInterval
-		values := make([]float64, irange/archive.secondsPerPoint)
-		log.Printf("irange/archive.secondsPerPoint = %+v\n", irange/archive.secondsPerPoint)
+		values := make([]float64, irange/archive.secondsPerPoint+1)
+
 		for i := range values {
 			values[i] = math.NaN()
 		}
@@ -1568,7 +1662,10 @@ func (whisper *Whisper) Fetch(fromTime, untilTime int) (timeSeries *TimeSeries, 
 			// log.Printf("(dPoint.interval-fromInterval)/archive.secondsPerPoint = %+v\n", (dPoint.interval-fromInterval)/archive.secondsPerPoint)
 			// log.Printf("dPoint.interval = %+v\n", dPoint.interval)
 			// log.Printf("fromInterval = %+v\n", fromInterval)
-			// log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
+			// // log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
+			// log.Printf("(dPoint.interval-fromInterval)/archive.secondsPerPoint = %+v\n", (dPoint.interval-fromInterval)/archive.secondsPerPoint)
+			// log.Printf("irange/archive.secondsPerPoint = %+v\n", irange/archive.secondsPerPoint)
+
 			values[(dPoint.interval-fromInterval)/archive.secondsPerPoint] = dPoint.value
 			// currentInterval = dPoint.interval + step
 		}
