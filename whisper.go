@@ -924,8 +924,6 @@ func (whisper *Whisper) UpdateMany(points []*TimeSeriesPoint) (err error) {
 		if len(currentPoints) == 0 {
 			continue
 		}
-		// log.Printf("currentPoints = %+v\n", currentPoints)
-		// log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
 		// reverse currentPoints
 		reversePoints(currentPoints)
 		if whisper.compressed {
@@ -1491,11 +1489,14 @@ func (whisper *Whisper) fetchCompressed(start, end int64, archive *archiveInfo) 
 	var dst []dataPoint
 	archive.dumpInfo()
 	for _, block := range archive.blockRanges {
+		fmt.Println("")
+		fmt.Println("")
 		log.Printf("block = %+v\n", block)
+		log.Printf("block.end >= int(start) && int(end) >= block.start = %+v\n", block.end >= int(start) && int(end) >= block.start)
 		if block.end >= int(start) && int(end) >= block.start {
 			// matchedBlocks = append(matchedBlocks, block)
 			buf := make([]byte, archive.blockSize)
-			// log.Printf("whisper.blockOffset(archive, block.index) = %+v\n", archive.blockOffset(block.index))
+			log.Printf("whisper.blockOffset(archive, block.index) = %+v\n", archive.blockOffset(block.index))
 			if err := whisper.fileReadAt(buf, int64(archive.blockOffset(block.index))); err != nil {
 				return nil, fmt.Errorf("fetchCompressed: %s", err)
 			}
@@ -1504,12 +1505,16 @@ func (whisper *Whisper) fetchCompressed(start, end int64, archive *archiveInfo) 
 			// 	fmt.Printf("%08b\n", buf[i-8:i])
 			// }
 
+			debugprint = block.index == 1
+
 			// dps = append(dps, ...)
 			var err error
-			dst, err = archive.readFromBlock(buf, dst, int(start), int(end))
+			ndst, err := archive.readFromBlock(buf, dst, int(start), int(end))
 			if err != nil {
 				return dst, err
 			}
+			_ = ndst
+			log.Printf("ndst = %+v\n", ndst)
 		}
 	}
 	// log.Printf("----\n")

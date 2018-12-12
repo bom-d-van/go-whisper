@@ -13,7 +13,7 @@ import (
 
 func main() {
 	whisper.Now = func() time.Time {
-		return time.Unix(1544478230-3600, 0)
+		return time.Unix(1544478230, 0)
 	}
 
 	db, err := whisper.OpenWithOptions(os.Args[1], &whisper.Options{Compressed: true, PointsPerBlock: 7200})
@@ -28,14 +28,15 @@ func main() {
 		// 1481403600,
 		// 1544472000,
 
-		int(time.Unix(1544478230, 0).Add(time.Hour*-24*27).Unix()),
-		int(time.Unix(1544478230, 0).Add(time.Hour*-24*28).Add(time.Minute*40320).Unix()),
+		int(time.Unix(1544478230, 0).Add(time.Hour*-24*28).Unix()),
+		// int(time.Unix(1544478230, 0).Add(time.Hour*-24*28).Add(time.Minute*40320).Unix()),
+		1544478230,
 	)
 	if err != nil {
 		panic(err)
 	}
 
-	// return
+	return
 
 	pretty.Println(data)
 	pretty.Println(db)

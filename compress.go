@@ -416,6 +416,8 @@ func (bw *BitsWriter) Write(lenb int, data ...byte) {
 	}
 }
 
+var debugprint bool
+
 func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int) ([]dataPoint, error) {
 	// var ps []dataPoint
 	// var p dataPoint
@@ -579,6 +581,10 @@ readloop:
 		// if debug {
 		// 	fmt.Println(a)
 		// }
+
+		if debugprint {
+			log.Printf("xxp = %+v\n", p)
+		}
 
 		if br.badRead {
 			log.Printf("6 = %+v\n", 7)
