@@ -80,6 +80,13 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			break
 		}
 
+		if ps[0].interval > 1544295600 {
+			log.Printf("p = %+v\n", ps[0])
+			log.Printf("a.secondsPerPoint = %+v\n", a.secondsPerPoint)
+			// log.Printf("size = %+v\n", size)
+			// log.Printf("left = %+v\n", left)
+		}
+
 		// write end-of-block marker if there is enough space
 		bw.WriteUint(4, 0x0f)
 		bw.WriteUint(32, 0)
@@ -462,6 +469,10 @@ readloop:
 			start, end, data := br.trailingDebug()
 			// log.Printf("br.Peek(1) = %+v\n", br.Peek(1))
 			return dst, fmt.Errorf("unknown timestamp prefix: %04b at %d, context[%d-%d] = %08b", br.Peek(4), br.current, start, end, data)
+		}
+
+		if p.interval > 1517858880 {
+			log.Printf("dps = %+v\n", len(dst))
 		}
 
 		br.Read(skip)

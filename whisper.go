@@ -1160,9 +1160,11 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		// log.Printf("blockBuffer[:size] = %08x\n", blockBuffer[:size])
 		// log.Printf("left = %+v\n", left)
 
-		// if dps[0].interval > 1544295600 || dps[0].interval < 1481475600 {
-		// 	log.Printf("dps = %+v\n", dps)
-		// }
+		if dps[0].interval > 1544295600 {
+			// log.Printf("dps = %+v\n", dps)
+			// log.Printf("size = %+v\n", size)
+			// log.Printf("left = %+v\n", left)
+		}
 
 		// flush block
 		end := size + 5

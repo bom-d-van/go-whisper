@@ -532,6 +532,9 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 	// 		1544295600
 	{
 		start := Now().Add(time.Hour * -24 * 365 * 2)
+		end := start.Add(time.Duration(17519) * time.Hour).Unix()
+		log.Printf("start = %+v\n", start.Unix())
+		log.Printf("end = %+v\n", end)
 		for i := 0; i < 17520; i++ {
 			if err := whisper.UpdateMany([]*TimeSeriesPoint{{
 				Time:  int(start.Add(time.Duration(i) * time.Hour).Unix()),
@@ -590,7 +593,9 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
+	log.Printf("len(dst) = %+v\n", len(dst))
 	log.Printf("dst = %+v\n", dst[len(dst)-10:])
+	log.Printf("dst = %+v\n", dst[:10])
 
 	// pretty.Println(whisper)
 
