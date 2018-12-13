@@ -31,7 +31,7 @@ const (
 	CompressedMetadataSize    = 24
 	VersionSize               = 1
 	CompressedArchiveInfoSize = 10*4 + 3*8 // 64
-	avgCompressedPointSize    = 2
+	avgCompressedPointSize    = 9
 	BlockRangeSize            = 8
 )
 
@@ -1230,13 +1230,13 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 
 	for {
 		// bw.index+a.cblock.lastByteOffset+1 >= a.blockOffset+a.blockSize
-		if 1542659100 <= dps[0].interval && dps[0].interval <= 1542659100+3600 {
-			log.Println("========")
-			log.Println("========")
-			log.Printf("dps[0].interval = %+v\n", dps[0].interval)
-			log.Printf("dps[len(dps)-1].interval = %+v\n", dps[len(dps)-1].interval)
-			log.Printf("len(dps) = %+v\n", len(dps))
-		}
+		// if 1542659100 <= dps[0].interval && dps[0].interval <= 1542659100+3600 {
+		// 	log.Println("========")
+		// 	log.Println("========")
+		// 	log.Printf("dps[0].interval = %+v\n", dps[0].interval)
+		// 	log.Printf("dps[len(dps)-1].interval = %+v\n", dps[len(dps)-1].interval)
+		// 	log.Printf("len(dps) = %+v\n", len(dps))
+		// }
 
 		size, left := archive.appendPointsToBlock(blockBuffer, dps...)
 		// archive.blockDirty = true
@@ -1303,9 +1303,11 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 
 		// archive.blockBufferIndex = 0
 
+		log.Println("archive.secondsPerPoint:", archive.secondsPerPoint)
 		log.Println("(archive.cblock.index + 1) % len(archive.blockRanges):", (archive.cblock.index+1)%len(archive.blockRanges))
 		log.Println("(archive.cblock.index + 1):", (archive.cblock.index + 1))
 		log.Println("len(archive.blockRanges):", len(archive.blockRanges))
+		log.Printf("block size: %d\n", archive.cblock.lastByteOffset-archive.blockOffset(archive.cblock.index))
 
 		// archive.blockRanges[archive.cblock.index].end = archive.cblock.pn1.interval
 		var nblock blockInfo
@@ -1916,6 +1918,7 @@ func (a *archiveInfo) blockOffset(blockIndex int) int {
 }
 
 func (archive *archiveInfo) dumpInfo() {
+	fmt.Println("")
 	fmt.Printf("number_of_points:  %d\n", archive.numberOfPoints)
 	fmt.Printf("seconds_per_point: %d\n", archive.secondsPerPoint)
 	fmt.Printf("block_size:        %d\n", archive.blockSize)
@@ -1928,6 +1931,26 @@ func (archive *archiveInfo) dumpInfo() {
 	fmt.Printf("  last_byte:         %08b\n", archive.cblock.lastByte)
 	fmt.Printf("  last_byte_offset:  %d\n", archive.cblock.lastByteOffset)
 	fmt.Printf("  last_byte_bit_pos: %d\n", archive.cblock.lastByteBitPos)
+
+	// for i := range arc.blockRanges {
+	// 	arc.blockRanges[i].index = i
+	// }
+	sort.Slice(archive.blockRanges, func(i, j int) bool {
+		istart := archive.blockRanges[i].start
+		if archive.blockRanges[i].start == 0 {
+			istart = math.MaxInt64
+		}
+		jstart := archive.blockRanges[j].start
+		if archive.blockRanges[j].start == 0 {
+			jstart = math.MaxInt64
+		}
+		return istart < jstart
+		// return archive.blockRanges[i].start > 0 && archive.blockRanges[j].start > 0 && archive.blockRanges[i].start < archive.blockRanges[j].start
+	})
+
+	for _, block := range archive.blockRanges {
+		fmt.Printf("%d: %d-%d %d\n", block.index, block.start, block.end, (block.end-block.start)/archive.secondsPerPoint)
+	}
 }
 
 // func (a *archiveInfo) nextWritableBlockOffset() int {

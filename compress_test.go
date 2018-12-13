@@ -546,49 +546,61 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			ps := []*TimeSeriesPoint{{
 				Time: int(start.Add(time.Duration(i) * time.Hour).Unix()),
 				// Value: float64(i),
-				Value: rand.NormFloat64(),
+				// Value: rand.NormFloat64(),
+				Value: float64(rand.Intn(100)),
 			}}
-			log.Printf("ps[0] = %+v\n", *ps[0])
+			// log.Printf("ps[0] = %+v\n", *ps[0])
 			if err := whisper.UpdateMany(ps); err != nil {
 				t.Error(err)
 			}
 		}
 	}
 
-	// {
-	// 	start := Now().Add(time.Hour * -24 * 28)
-	// 	log.Printf("start = %+v\n", start.Unix())
-	// 	log.Printf("end   = %+v\n", int(start.Add(time.Duration(40319)*time.Minute).Unix()))
-	// 	for i := 0; i < 40320; i++ {
-	// 		if err := whisper.UpdateMany([]*TimeSeriesPoint{{
-	// 			Time: int(start.Add(time.Duration(i) * time.Minute).Unix()),
-	// 			// Value: float64(i),
-	// 			Value: rand.NormFloat64(),
-	// 		}}); err != nil {
-	// 			t.Error(err)
-	// 		}
-	// 	}
-	// }
+	{
+		start := Now().Add(time.Hour * -24 * 28)
+		log.Printf("start = %+v\n", start.Unix())
+		log.Printf("end   = %+v\n", int(start.Add(time.Duration(40319)*time.Minute).Unix()))
+		for i := 0; i < 40320; i++ {
+			if err := whisper.UpdateMany([]*TimeSeriesPoint{{
+				Time: int(start.Add(time.Duration(i) * time.Minute).Unix()),
+				// Value: float64(i),
+				// Value: rand.NormFloat64(),
+				Value: float64(rand.Intn(100)),
+			}}); err != nil {
+				t.Error(err)
+			}
+		}
+	}
 
-	// {
-	// 	start := Now().Add(time.Hour * -24 * 2)
-	// 	for i := 0; i < 172800; i++ {
-	// 		if err := whisper.UpdateMany([]*TimeSeriesPoint{{
-	// 			Time: int(start.Add(time.Duration(i) * time.Second).Unix()),
-	// 			// Value: float64(i),
-	// 			Value: rand.NormFloat64(),
-	// 		}}); err != nil {
-	// 			t.Error(err)
-	// 		}
-	// 	}
-	// }
+	{
+		// 1544478230 - 24 * 2 * 60 * 60 * 60 = 1534110230
+		// 1544478179 - 1544305430 = 172749
+		start := Now().Add(time.Hour * -24 * 2)
+		for i := 0; i < 172800; {
+			ps := []*TimeSeriesPoint{{
+				Time: int(start.Add(time.Duration(i) * time.Second).Unix()),
+				// Value: float64(i),
+				Value: rand.NormFloat64(),
+				// Value: float64(rand.Intn(100000)),
+			}}
+			// log.Printf("ps[0] = %+v\n", *ps[0])
+			if err := whisper.UpdateMany(ps); err != nil {
+				t.Error(err)
+			}
+
+			// i += rand.Intn(1)
+			i += 1
+		}
+	}
 	whisper.Close()
 
 	pretty.Println(whisper)
-
-	pretty.Printf("whisper.archives[0].blockRanges = %# v\n", whisper.archives[0].blockRanges)
-	pretty.Printf("whisper.archives[1].blockRanges = %# v\n", whisper.archives[1].blockRanges)
-	pretty.Printf("whisper.archives[2].blockRanges = %# v\n", whisper.archives[2].blockRanges)
+	for _, ar := range whisper.archives {
+		ar.dumpInfo()
+	}
+	// pretty.Printf("whisper.archives[0].blockRanges = %# v\n", whisper.archives[0].blockRanges)
+	// pretty.Printf("whisper.archives[1].blockRanges = %# v\n", whisper.archives[1].blockRanges)
+	// pretty.Printf("whisper.archives[2].blockRanges = %# v\n", whisper.archives[2].blockRanges)
 
 	whisper, err = OpenWithOptions(fpath, &Options{Compressed: true, PointsPerBlock: 7200})
 	if err != nil {

@@ -89,8 +89,8 @@ func main() {
 	// }
 	{
 		data, err := db.Fetch(
-			int(time.Unix(1544478230, 0).Add(time.Hour*-24*365*2).Add(time.Hour*-72).Unix()),
-			int(time.Unix(1544478230, 0).Add(time.Hour*-24*365*2).Add(time.Hour*17520).Unix()),
+			int(time.Unix(1544478230, 0).Add(time.Hour*-24*2).Unix()),
+			int(time.Unix(1544478230, 0).Unix()),
 		)
 		if err != nil {
 			panic(err)
