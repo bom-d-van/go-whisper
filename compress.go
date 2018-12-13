@@ -168,6 +168,8 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			if debug {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(1, 0))
 			}
+
+			a.stats.interval.len1++
 		} else if -63 < delta && delta < 64 {
 			bw.Write(2, 2)
 			if delta < 0 {
@@ -179,6 +181,8 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			if debug {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(2, 2, 7, uint64(delta)))
 			}
+
+			a.stats.interval.len9++
 		} else if -255 < delta && delta < 256 {
 			bw.Write(3, 6)
 			if delta < 0 {
@@ -190,6 +194,8 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			if debug {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(3, 6, 9, uint64(delta)))
 			}
+
+			a.stats.interval.len12++
 		} else if -2047 < delta && delta < 2048 {
 			bw.Write(4, 14)
 			if delta < 0 {
@@ -201,6 +207,8 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			if debug {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(4, 14, 12, uint64(delta)))
 			}
+
+			a.stats.interval.len16++
 		} else {
 			bw.Write(4, 15)
 			bw.WriteUint(32, uint64(p.interval))
@@ -208,6 +216,8 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			if debug {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(4, 15, 32, uint64(delta)))
 			}
+
+			a.stats.interval.len36++
 		}
 
 		// pval := float64ToUint64(ps[len(ps)-1].value)
@@ -230,6 +240,8 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			if debug {
 				fmt.Printf("\tsame, write 0\n")
 			}
+
+			a.stats.value.same++
 		} else {
 			plz := bits.LeadingZeros64(pxor)
 			lz := bits.LeadingZeros64(xor)
@@ -243,9 +255,10 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 					// fmt.Printf("mlen = %d %b\n", mlen, xor>>uint64(ptz))
 					fmt.Printf("\tsame-length meaningful block: %0s\n", dumpBits(2, 2, uint64(mlen), xor>>uint(ptz)))
 				}
+
+				a.stats.value.sameLen++
 			} else {
 				// TODO: handle if lz >= 1<<5
-
 				mlen := 64 - lz - tz // meaningful block size
 				wmlen := mlen
 
@@ -270,6 +283,8 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 				if debug {
 					fmt.Printf("\tvaried-length meaningful block: %0s\n", dumpBits(2, 3, 5, uint64(lz), 6, uint64(mlen), uint64(wmlen), xor))
 				}
+
+				a.stats.value.variedLen++
 			}
 		}
 
@@ -301,6 +316,18 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		// log.Printf("a.cblock = %+v\n", a.cblock)
 		a.cblock.pn2 = a.cblock.pn1
 		a.cblock.pn1 = p
+
+		if debug {
+			start := bw.index - 8
+			end := bw.index + 8
+			if start < 0 {
+				start = 0
+			}
+			if end > len(bw.buf) {
+				end = len(bw.buf) - 1
+			}
+			fmt.Printf("%d/%d/%d: %08b\n", bw.index, start, end, bw.buf[start:end])
+		}
 	}
 
 	// data = bw.buf[:bw.index+1]
@@ -582,9 +609,9 @@ readloop:
 		// 	fmt.Println(a)
 		// }
 
-		if debugprint {
-			log.Printf("xxp = %+v\n", p)
-		}
+		// if debugprint {
+		// 	log.Printf("xxp = %+v\n", p)
+		// }
 
 		if br.badRead {
 			log.Printf("6 = %+v\n", 7)

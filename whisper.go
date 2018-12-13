@@ -1048,6 +1048,11 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 		baseStragety = 2
 	}
 
+	// debug = 1542659100 <= alignedPoints[0].interval && alignedPoints[0].interval <= 1542659100+3600
+	// if debug {
+	// 	log.Printf("alignedPoints[0] = %+v\n", alignedPoints[0])
+	// }
+
 	// log.Println("archiveUpdateManyCompressed")
 	// pretty.Println(alignedPoints)
 
@@ -1225,6 +1230,13 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 
 	for {
 		// bw.index+a.cblock.lastByteOffset+1 >= a.blockOffset+a.blockSize
+		if 1542659100 <= dps[0].interval && dps[0].interval <= 1542659100+3600 {
+			log.Println("========")
+			log.Println("========")
+			log.Printf("dps[0].interval = %+v\n", dps[0].interval)
+			log.Printf("dps[len(dps)-1].interval = %+v\n", dps[len(dps)-1].interval)
+			log.Printf("len(dps) = %+v\n", len(dps))
+		}
 
 		size, left := archive.appendPointsToBlock(blockBuffer, dps...)
 		// archive.blockDirty = true
@@ -1235,17 +1247,19 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		// log.Printf("blockBuffer[:size] = %08x\n", blockBuffer[:size])
 		// log.Printf("left = %+v\n", left)
 
-		if dps[0].interval > 1544295600 {
-			// log.Printf("dps = %+v\n", dps)
-			// log.Printf("size = %+v\n", size)
-			// log.Printf("left = %+v\n", left)
-		}
-
 		// flush block
-		end := size + 5
+		end := size + 5 // include end-of-block marker
 		if end >= len(blockBuffer) {
 			end = len(blockBuffer) - 1
 		}
+
+		// if 1542659100 <= dps[0].interval && dps[0].interval <= 1542659100+3600 {
+		// 	log.Printf("int64(archive.cblock.lastByteOffset-size+1) = %+v\n", int64(archive.cblock.lastByteOffset-size+1))
+		// 	log.Printf("blockBuffer[:end] = %08b\n", blockBuffer[:end])
+		// 	log.Println("========")
+		// 	log.Println("========")
+		// }
+
 		if err := whisper.fileWriteAt(blockBuffer[:end], int64(archive.cblock.lastByteOffset-size+1)); err != nil {
 			return err
 		}
@@ -1254,6 +1268,10 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		b := make([]byte, 200)
 		if _, err := whisper.file.ReadAt(b, int64(archive.blockOffset(archive.cblock.index))); err != nil {
 			return err
+		}
+
+		for i := 0; i < len(blockBuffer); i++ {
+			blockBuffer[i] = 0
 		}
 
 		// for i := 8; i < 200; i += 8 {
@@ -1285,9 +1303,9 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 
 		// archive.blockBufferIndex = 0
 
-		// log.Println("(archive.cblock.index + 1) % len(archive.blockRanges):", (archive.cblock.index+1)%len(archive.blockRanges))
-		// log.Println("(archive.cblock.index + 1):", (archive.cblock.index + 1))
-		// log.Println("len(archive.blockRanges):", len(archive.blockRanges))
+		log.Println("(archive.cblock.index + 1) % len(archive.blockRanges):", (archive.cblock.index+1)%len(archive.blockRanges))
+		log.Println("(archive.cblock.index + 1):", (archive.cblock.index + 1))
+		log.Println("len(archive.blockRanges):", len(archive.blockRanges))
 
 		// archive.blockRanges[archive.cblock.index].end = archive.cblock.pn1.interval
 		var nblock blockInfo
@@ -1489,14 +1507,14 @@ func (whisper *Whisper) fetchCompressed(start, end int64, archive *archiveInfo) 
 	var dst []dataPoint
 	archive.dumpInfo()
 	for _, block := range archive.blockRanges {
-		fmt.Println("")
-		fmt.Println("")
-		log.Printf("block = %+v\n", block)
-		log.Printf("block.end >= int(start) && int(end) >= block.start = %+v\n", block.end >= int(start) && int(end) >= block.start)
+		// fmt.Println("")
+		// fmt.Println("")
+		// log.Printf("block = %+v\n", block)
+		// log.Printf("block.end >= int(start) && int(end) >= block.start = %+v\n", block.end >= int(start) && int(end) >= block.start)
 		if block.end >= int(start) && int(end) >= block.start {
 			// matchedBlocks = append(matchedBlocks, block)
 			buf := make([]byte, archive.blockSize)
-			log.Printf("whisper.blockOffset(archive, block.index) = %+v\n", archive.blockOffset(block.index))
+			// log.Printf("whisper.blockOffset(archive, block.index) = %+v\n", archive.blockOffset(block.index))
 			if err := whisper.fileReadAt(buf, int64(archive.blockOffset(block.index))); err != nil {
 				return nil, fmt.Errorf("fetchCompressed: %s", err)
 			}
@@ -1505,16 +1523,16 @@ func (whisper *Whisper) fetchCompressed(start, end int64, archive *archiveInfo) 
 			// 	fmt.Printf("%08b\n", buf[i-8:i])
 			// }
 
-			debugprint = block.index == 1
+			// debugprint = block.index == 1
 
 			// dps = append(dps, ...)
 			var err error
-			ndst, err := archive.readFromBlock(buf, dst, int(start), int(end))
+			dst, err = archive.readFromBlock(buf, dst, int(start), int(end))
 			if err != nil {
 				return dst, err
 			}
-			_ = ndst
-			log.Printf("ndst = %+v\n", ndst)
+			// _ = ndst
+			// log.Printf("ndst = %+v\n", ndst)
 		}
 	}
 	// log.Printf("----\n")
@@ -1867,6 +1885,15 @@ type archiveInfo struct {
 	// blockBuffer      []byte
 	// blockDirty       bool
 	// blockBufferIndex int
+
+	stats struct {
+		interval struct {
+			len1, len9, len12, len16, len36 uint
+		}
+		value struct {
+			same, sameLen, variedLen uint
+		}
+	}
 }
 
 type blockInfo struct {
