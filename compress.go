@@ -98,6 +98,8 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		fmt.Println(a.blockSize)
 	}
 
+	// TODO: return error if interval is not monotonically increasing
+
 	// clean possible end-of-block maker
 	bw.buf[0] &= 0xFF ^ (1<<uint(a.cblock.lastByteBitPos+1) - 1)
 	bw.buf[1] = 0
