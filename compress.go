@@ -162,6 +162,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		if debug {
 			fmt.Printf("%d %d: %v\n", i, p.interval, p.value)
 		}
+		// fmt.Printf("%d %d: %v\n", i, p.interval, p.value)
 
 		// TODO: use two's complement instead to extend delta range?
 		if delta == 0 {
@@ -463,17 +464,19 @@ func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int)
 
 	p := unpackDataPoint(buf)
 	// ps[0] = &p
-	log.Printf("start <= p.interval && p.interval <= end = %+v\n", start <= p.interval && p.interval <= end)
-	log.Printf("p.interval = %+v\n", p.interval)
-	fmt.Println("start =", start)
-	fmt.Println("end =", end)
-	log.Printf("start <= p.interval = %+v\n", start <= p.interval)
-	log.Printf("p.interval <= end = %+v\n", p.interval <= end)
+
+	// log.Printf("start <= p.interval && p.interval <= end = %+v\n", start <= p.interval && p.interval <= end)
+	// log.Printf("p.interval = %+v\n", p.interval)
+	// fmt.Println("start =", start)
+	// fmt.Println("end =", end)
+	// log.Printf("start <= p.interval = %+v\n", start <= p.interval)
+	// log.Printf("p.interval <= end = %+v\n", p.interval <= end)
+
 	if start <= p.interval && p.interval <= end {
 		dst = append(dst, p)
 	}
 
-	log.Printf("p = %+v\n", p)
+	// log.Printf("p = %+v\n", p)
 
 	// log.Printf("dst = %+v\n", dst)
 
@@ -482,7 +485,7 @@ func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int)
 readloop:
 	for {
 		if br.current >= len(br.buf) {
-			log.Printf("0 = %+v\n", 1)
+			// log.Printf("0 = %+v\n", 1)
 			break
 		}
 
@@ -533,11 +536,11 @@ readloop:
 			if debug {
 				fmt.Println("\tended by 0 bits to read")
 			}
-			log.Printf("2 = %+v\n", 3)
+			// log.Printf("2 = %+v\n", 3)
 			break readloop
 		case 32:
 			if delta == 0 {
-				log.Printf("4 = %+v\n", 5)
+				// log.Printf("4 = %+v\n", 5)
 				break readloop
 			}
 			p.interval = delta
@@ -616,7 +619,7 @@ readloop:
 		// }
 
 		if br.badRead {
-			log.Printf("6 = %+v\n", 7)
+			// log.Printf("6 = %+v\n", 7)
 			break
 		}
 
@@ -630,7 +633,7 @@ readloop:
 			dst = append(dst, p)
 		}
 		if p.interval >= end {
-			log.Printf("8 = %+v\n", 9)
+			// log.Printf("8 = %+v\n", 9)
 			break
 		}
 	}

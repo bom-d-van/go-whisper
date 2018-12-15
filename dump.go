@@ -89,8 +89,10 @@ func main() {
 	// }
 	{
 		data, err := db.Fetch(
-			int(time.Unix(1544478230, 0).Add(time.Hour*-24*2).Unix()),
-			int(time.Unix(1544478230, 0).Unix()),
+			// int(time.Unix(1544789552, 0).Add(time.Hour*-24*2).Unix()),
+			// int(time.Unix(1544789552, 0).Unix()),
+			// 1510236480, 1510681980,
+			1544456220, 1544796420,
 		)
 		if err != nil {
 			panic(err)
@@ -102,6 +104,7 @@ func main() {
 	}
 
 	// pretty.Println(db)
+	db.Dump()
 
 	// fmt.Println(int(time.Unix(1544478230, 0).Add(time.Hour * -24 * 365 * 2).Add(time.Hour * -72).Unix()))
 	// fmt.Println(int(time.Unix(1544478230, 0).Add(time.Hour * -24 * 365 * 2).Add(time.Hour * 17520).Unix()))

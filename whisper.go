@@ -16,8 +16,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/kr/pretty"
 )
 
 const (
@@ -28,10 +26,10 @@ const (
 	MetadataSize    = 16
 	ArchiveInfoSize = 12
 
-	CompressedMetadataSize    = 24
+	CompressedMetadataSize    = 24 + 4
 	VersionSize               = 1
-	CompressedArchiveInfoSize = 10*4 + 3*8 // 64
-	avgCompressedPointSize    = 4
+	CompressedArchiveInfoSize = 10*4 + 3*8 + 4 // 64
+	avgCompressedPointSize    = 2
 	BlockRangeSize            = 8
 )
 
@@ -64,6 +62,7 @@ type Options struct {
 
 	Compressed     bool
 	PointsPerBlock int
+	PointSize      float32
 }
 
 func unitMultiplier(s string) (int, error) {
@@ -155,9 +154,10 @@ type Whisper struct {
 	xFilesFactor      float32
 	archives          []*archiveInfo
 
-	compressed     bool
-	compVersion    int
-	pointsPerBlock int
+	compressed             bool
+	compVersion            int
+	pointsPerBlock         int
+	avgCompressedPointSize float32
 
 	noPropagation bool
 }
@@ -165,6 +165,9 @@ type Whisper struct {
 // Wrappers for whisper.file operations
 func (whisper *Whisper) fileWriteAt(b []byte, off int64) error {
 	_, err := whisper.file.WriteAt(b, off)
+	if err != nil {
+		panic(err)
+	}
 	return err
 }
 
@@ -208,6 +211,9 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 			return nil, err
 		}
 	}
+	if options.PointSize == 0 {
+		options.PointSize = avgCompressedPointSize
+	}
 
 	whisper = new(Whisper)
 
@@ -218,6 +224,7 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 
 	whisper.compressed = options.Compressed
 	whisper.pointsPerBlock = options.PointsPerBlock
+	whisper.avgCompressedPointSize = options.PointSize
 	for _, retention := range retentions {
 		if retention.MaxRetention() > whisper.maxRetention {
 			whisper.maxRetention = retention.MaxRetention()
@@ -238,11 +245,13 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 		whisper.archives[i].offset = offset
 
 		if whisper.compressed {
+			// whisper.archives[i].avgCompressedPointSize = options.PointSize
+			whisper.archives[i].avgCompressedPointSize = whisper.avgCompressedPointSize
 			whisper.archives[i].cblock.lastByteBitPos = 7
 			if retention.numberOfPoints > whisper.pointsPerBlock {
-				whisper.archives[i].blockSize = whisper.pointsPerBlock * avgCompressedPointSize
+				whisper.archives[i].blockSize = int(float64(whisper.pointsPerBlock) * float64(whisper.archives[i].avgCompressedPointSize))
 			} else {
-				whisper.archives[i].blockSize = retention.numberOfPoints * avgCompressedPointSize
+				whisper.archives[i].blockSize = int(float64(retention.numberOfPoints) * float64(whisper.archives[i].avgCompressedPointSize))
 			}
 			// whisper.archives[i].blockCount = whisper.blockCount(whisper.archives[i])
 			whisper.archives[i].blockRanges = make([]blockRange, whisper.blockCount(whisper.archives[i]))
@@ -429,7 +438,7 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 	for i := 0; i < archiveCount; i++ {
 		readed, err = file.Read(b)
 		if err != nil || readed != ArchiveInfoSize {
-			err = fmt.Errorf("Unable to read archive %d metadata", i)
+			err = fmt.Errorf("Unable to read archive %d metadata: %s", i, err)
 			return
 		}
 		whisper.archives = append(whisper.archives, unpackArchiveInfo(b))
@@ -460,6 +469,11 @@ func (whisper *Whisper) initMetaInfo() {
 		prevArc := whisper.archives[i-1]
 		prevArc.next = arc
 		prevArc.bufferSize = arc.secondsPerPoint / prevArc.secondsPerPoint * PointSize
+
+		// log.Printf("arc.secondsPerPoint = %+v\n", arc.secondsPerPoint)
+		// log.Printf("prevArc.secondsPerPoint = %+v\n", prevArc.secondsPerPoint)
+		// log.Printf("prevArc.bufferSize = %+v\n", prevArc.bufferSize)
+
 		bufOffset += prevArc.bufferSize
 		prevArc.bufferOffset = bufOffset
 
@@ -534,6 +548,8 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 	offset += IntSize
 	archiveCount := unpackInt(b[offset : offset+IntSize])
 	offset += IntSize
+	whisper.avgCompressedPointSize = unpackFloat32(b[offset : offset+FloatSize])
+	offset += FloatSize
 
 	log.Printf("offset = %+v\n", offset)
 
@@ -577,6 +593,8 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 		offset += IntSize
 		arc.blockSize = unpackInt(b[offset : offset+IntSize])
 		offset += IntSize
+		arc.avgCompressedPointSize = unpackFloat32(b[offset : offset+FloatSize])
+		offset += FloatSize
 
 		arc.cblock.index = unpackInt(b[offset : offset+IntSize])
 		offset += IntSize
@@ -608,6 +626,8 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 
 	whisper.initMetaInfo()
 
+	// pretty.Println(whisper)
+
 	for i, arc := range whisper.archives {
 		b := make([]byte, BlockRangeSize*whisper.blockCount(arc))
 		readed, err = whisper.file.Read(b)
@@ -635,9 +655,10 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 		// offset += arc.bufferSize
 
 		readed, err = whisper.file.Read(arc.buffer)
-		if err != nil || readed != arc.bufferSize {
-			err = fmt.Errorf("Unable to read archive %d buffer: %s", i, err)
-			return
+		if err != nil {
+			return fmt.Errorf("Unable to read archive %d buffer: %s", i, err)
+		} else if readed != arc.bufferSize {
+			return fmt.Errorf("Unable to read archive %d buffer: readed = %d want = %d", i, readed, arc.bufferSize)
 		}
 	}
 
@@ -698,6 +719,7 @@ func (whisper *Whisper) writeHeaderCompressed() (err error) {
 	i += packInt(b, whisper.pointsPerBlock, i)
 	i += packInt(b, whisper.compVersion, i)
 	i += packInt(b, len(whisper.archives), i)
+	i += packFloat32(b, whisper.avgCompressedPointSize, i)
 
 	for _, archive := range whisper.archives {
 		// i += packInt(b, archive.startTimestamp, i)
@@ -706,6 +728,7 @@ func (whisper *Whisper) writeHeaderCompressed() (err error) {
 		i += packInt(b, archive.secondsPerPoint, i)
 		i += packInt(b, archive.numberOfPoints, i)
 		i += packInt(b, archive.blockSize, i)
+		i += packFloat32(b, archive.avgCompressedPointSize, i)
 		// for _, bran := range archive.blockRanges {
 		// 	i += packInt(b, bran.start, i)
 		// 	i += packInt(b, bran.end, i)
@@ -931,11 +954,14 @@ func (whisper *Whisper) UpdateMany(points []*TimeSeriesPoint) (err error) {
 	log.Printf("len(points) = %+v\n", len(points))
 
 	var currentPoints []*TimeSeriesPoint
-	for _, archive := range whisper.archives {
+	// for _, archive := range whisper.archives {
+	for i := 0; i < len(whisper.archives); i++ {
+		archive := whisper.archives[i]
 		currentPoints, points = extractPoints(points, now, archive.MaxRetention())
 
-		log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
-		log.Printf("len(currentPoints) = %+v\n", len(currentPoints))
+		// log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
+		// log.Printf("len(currentPoints) = %+v\n", len(currentPoints))
+
 		// if len(currentPoints) > 10 {
 		// 	pretty.Println(currentPoints[:10])
 		// 	pretty.Println(currentPoints[len(currentPoints)-10:])
@@ -1335,6 +1361,37 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		nblock.lastByteBitPos = 7
 		nblock.lastByteOffset = archive.blockOffset(nblock.index)
 
+		// whole-archive rotation detected
+		isFull := true
+		var max, min int
+		for _, b := range archive.blockRanges {
+			isFull = isFull && b.start > 0 && b.end > 0
+			if min == 0 || min > b.start {
+				min = b.start
+			}
+			if max == 0 || max < b.end {
+				max = b.end
+			}
+		}
+		if isFull {
+			total := (max - min) / archive.secondsPerPoint
+			log.Printf("max = %+v\n", max)
+			log.Printf("min = %+v\n", min)
+			if total < archive.numberOfPoints {
+				if err := whisper.extend(float32((float64(archive.numberOfPoints)/float64(total) + 0.0618) * float64(whisper.avgCompressedPointSize))); err != nil {
+					return err
+				}
+			}
+			// os.Exit(0)
+			for _, narchive := range whisper.archives {
+				if narchive.secondsPerPoint == archive.secondsPerPoint {
+					*archive = *narchive
+					return narchive.appendToBlockAndRotate(left)
+				}
+			}
+			return nil
+		}
+
 		// archive.blockRanges[nblock.index].start = left[0].interval
 		// archive.blockRanges[nblock.index].end = 0
 		archive.cblock = nblock
@@ -1364,6 +1421,71 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 	// }
 
 	return nil
+}
+
+// TODO: file close
+func (whisper *Whisper) extend(newSize float32) error {
+	log.Printf("extend = %f -> %f\n", whisper.avgCompressedPointSize, newSize)
+
+	var rets []*Retention
+	for _, arc := range whisper.archives {
+		rets = append(rets, &Retention{secondsPerPoint: arc.secondsPerPoint, numberOfPoints: arc.numberOfPoints})
+	}
+
+	filename := whisper.file.Name()
+	os.Remove(whisper.file.Name() + ".extend")
+
+	nwhisper, err := CreateWithOptions(
+		whisper.file.Name()+".extend", rets,
+		whisper.aggregationMethod, whisper.xFilesFactor,
+		&Options{Compressed: true, PointsPerBlock: 7200, PointSize: newSize},
+	)
+	if err != nil {
+		return fmt.Errorf("extend: %s", err)
+	}
+
+	for i := len(whisper.archives) - 1; i >= 0; i-- {
+		archive := whisper.archives[i]
+		archive.sortBlockRanges()
+
+		// log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
+		for _, block := range archive.blockRanges {
+			buf := make([]byte, archive.blockSize)
+			if err := whisper.fileReadAt(buf, int64(archive.blockOffset(block.index))); err != nil {
+				return fmt.Errorf("archives[%d].blocks[%d].file.read: %s", i, block.index, err)
+			}
+			dst, err := archive.readFromBlock(buf, []dataPoint{}, block.start, block.end)
+			if err != nil {
+				return fmt.Errorf("archives[%d].blocks[%d].read: %s", i, block.index, err)
+			}
+			// log.Printf("len(dst) = %+v\n", len(dst))
+			if err := nwhisper.archives[i].appendToBlockAndRotate(dst); err != nil {
+				return fmt.Errorf("archives[%d].blocks[%d].write: %s", i, block.index, err)
+			}
+		}
+
+		// whisper.archives[i].dumpInfo()
+		// nwhisper.archives[i].dumpInfo()
+
+		nwhisper.archives[i].buffer = whisper.archives[i].buffer
+	}
+
+	// if err := nwhisper.writeHeaderCompressed(); err != nil {
+	// 	return fmt.Errorf("extend/write_header: %s", err)
+	// }
+
+	whisper.Close()
+
+	nwhisper.file.Close()
+	if err := os.Rename(filename+".extend", filename); err != nil {
+		return fmt.Errorf("extend/rename: %s", err)
+	}
+
+	nwhisper.file, err = os.OpenFile(filename, os.O_RDWR, 0666)
+
+	*whisper = *nwhisper
+
+	return err
 }
 
 func extractPoints(points []*TimeSeriesPoint, now int, maxRetention int) (currentPoints []*TimeSeriesPoint, remainingPoints []*TimeSeriesPoint) {
@@ -1523,11 +1645,12 @@ func (whisper *Whisper) readSeries(start, end int64, archive *archiveInfo) ([]da
 }
 
 func (whisper *Whisper) fetchCompressed(start, end int64, archive *archiveInfo) ([]dataPoint, error) {
-	log.Println("-------- fetchCompressed")
-	log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
-	pretty.Println(archive.blockRanges)
+	// log.Println("-------- fetchCompressed")
+	// log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
+	// pretty.Println(archive.blockRanges)
+	// archive.dumpInfo()
+
 	var dst []dataPoint
-	archive.dumpInfo()
 	for _, block := range archive.blockRanges {
 		// fmt.Println("")
 		// fmt.Println("")
@@ -1908,6 +2031,8 @@ type archiveInfo struct {
 	// blockDirty       bool
 	// blockBufferIndex int
 
+	avgCompressedPointSize float32
+
 	stats struct {
 		interval struct {
 			len1, len9, len12, len16, len36 uint
@@ -1937,12 +2062,18 @@ func (a *archiveInfo) blockOffset(blockIndex int) int {
 	return a.offset + blockIndex*a.blockSize
 }
 
+func (whisper *Whisper) Dump() {
+	for _, arc := range whisper.archives {
+		arc.dumpInfo()
+	}
+}
 func (archive *archiveInfo) dumpInfo() {
 	fmt.Println("")
-	fmt.Printf("number_of_points:  %d\n", archive.numberOfPoints)
-	fmt.Printf("seconds_per_point: %d\n", archive.secondsPerPoint)
+	fmt.Printf("number_of_points:  %d %s\n", archive.numberOfPoints, time.Duration(int(time.Second)*archive.secondsPerPoint*archive.numberOfPoints))
+	fmt.Printf("seconds_per_point: %d %s\n", archive.secondsPerPoint, time.Duration(int(time.Second)*archive.secondsPerPoint))
 	fmt.Printf("block_size:        %d\n", archive.blockSize)
 	fmt.Printf("buffer_size:       %d\n", archive.bufferSize)
+	fmt.Printf("point_size:        %f\n", archive.avgCompressedPointSize)
 	fmt.Printf("cblock\n")
 	fmt.Printf("  index:     %d\n", archive.cblock.index)
 	fmt.Printf("  p[0].interval:     %d\n", archive.cblock.p0.interval)
@@ -1955,6 +2086,14 @@ func (archive *archiveInfo) dumpInfo() {
 	// for i := range arc.blockRanges {
 	// 	arc.blockRanges[i].index = i
 	// }
+	archive.sortBlockRanges()
+
+	for _, block := range archive.blockRanges {
+		fmt.Printf("%d: %d-%d %d\n", block.index, block.start, block.end, (block.end-block.start)/archive.secondsPerPoint)
+	}
+}
+
+func (archive *archiveInfo) sortBlockRanges() {
 	sort.Slice(archive.blockRanges, func(i, j int) bool {
 		istart := archive.blockRanges[i].start
 		if archive.blockRanges[i].start == 0 {
@@ -1967,10 +2106,6 @@ func (archive *archiveInfo) dumpInfo() {
 		return istart < jstart
 		// return archive.blockRanges[i].start > 0 && archive.blockRanges[j].start > 0 && archive.blockRanges[i].start < archive.blockRanges[j].start
 	})
-
-	for _, block := range archive.blockRanges {
-		fmt.Printf("%d: %d-%d %d\n", block.index, block.start, block.end, (block.end-block.start)/archive.secondsPerPoint)
-	}
 }
 
 // func (a *archiveInfo) nextWritableBlockOffset() int {

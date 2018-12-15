@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -215,7 +216,7 @@ func TestBlockReadWrite2(t *testing.T) {
 		acv.secondsPerPoint = 1
 		acv.numberOfPoints = 100
 		acv.cblock.lastByteBitPos = 7
-		acv.blockSize = acv.numberOfPoints * avgCompressedPointSize
+		acv.blockSize = int(float64(acv.numberOfPoints) * avgCompressedPointSize)
 		acv.blockRanges = make([]blockRange, 1)
 		// acv.buffer
 
@@ -680,9 +681,9 @@ func TestCompressedWhisperReadWrite4(t *testing.T) {
 		rets = append(rets, &Retention{secondsPerPoint: arc.secondsPerPoint, numberOfPoints: arc.numberOfPoints})
 	}
 
-	os.Remove("compressed.whisper")
+	os.Remove(*whisperFile + ".cwsp")
 	cdst, err := CreateWithOptions(
-		"compressed.whisper", rets,
+		*whisperFile+".cwsp", rets,
 		src.aggregationMethod, src.xFilesFactor,
 		&Options{Compressed: true, PointsPerBlock: 7200},
 	)
@@ -694,74 +695,28 @@ func TestCompressedWhisperReadWrite4(t *testing.T) {
 
 	for i := len(src.archives) - 1; i >= 0; i-- {
 		archive := src.archives[i]
-		// archive.MaxRetention()
-		// src.Fetch(time.Now()-archive.MaxRetention(), time.Now())
 
-		offset := int(1544789552) // now
-		if i > 0 {
-			offset -= src.archives[i-1].MaxRetention()
-		}
-
-		{
-			// b := make([]byte, archive.Size())
-			// err := src.fileReadAt(b, archive.Offset())
-			// if err != nil {
-			// 	t.Fatal(err)
-			// }
-			// points := unpackDataPoints(b)
-			// log.Printf("len(points) = %+v\n", len(points))
-			// var max, min int
-			// for _, p := range points {
-			// 	if p.interval != 0 {
-			// 		if max == 0 || max < p.interval {
-			// 			max = p.interval
-			// 		}
-			// 		if min == 0 || min > p.interval {
-			// 			min = p.interval
-			// 		}
-			// 	}
-			// }
-			// log.Printf("max = %+v\n", max)
-			// log.Printf("min = %+v\n", min)
-		}
-		// continue
-
-		baseInterval := src.getBaseInterval(archive)
-		fromInterval := archive.Interval(offset - archive.MaxRetention())
-		untilInterval := archive.Interval(offset)
-		fromOffset := archive.PointOffset(baseInterval, fromInterval)
-		untilOffset := archive.PointOffset(baseInterval, untilInterval)
-
-		log.Printf("fromInterval = %+v\n", fromInterval)
-		log.Printf("untilInterval = %+v\n", untilInterval)
-
-		series, err := src.readSeries(fromOffset, untilOffset, archive)
+		b := make([]byte, archive.Size())
+		err := src.fileReadAt(b, archive.Offset())
 		if err != nil {
 			t.Fatal(err)
 		}
+		points := unpackDataPoints(b)
+		sort.Slice(points, func(i, j int) bool {
+			return points[i].interval < points[j].interval
+		})
 
-		var dps []*TimeSeriesPoint
-		currentInterval := fromInterval
-		step := archive.secondsPerPoint
-		for _, p := range series {
-			if p.interval == currentInterval {
-				// values[i] = dPoint.value
-				dps = append(dps, &TimeSeriesPoint{Time: p.interval, Value: p.value})
-			}
-			currentInterval += step
-		}
-
-		// log.Printf("len(dps) = %+v\n", len(dps))
-		// continue
-
-		// pretty.Println(dps[:10])
-
-		if err := cdst.UpdateMany(dps); err != nil {
+		if err := cdst.archives[i].appendToBlockAndRotate(points); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	// // pretty.Println(cdst)
+	if err := cdst.writeHeaderCompressed(); err != nil {
+		t.Fatal(err)
+	}
+	cdst.Close()
+
+	// pretty.Println(cdst)
 	// for _, archive := range cdst.archives {
 	// 	archive.dumpInfo()
 	// }
