@@ -262,6 +262,9 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 				a.stats.value.sameLen++
 			} else {
 				// TODO: handle if lz >= 1<<5
+				if lz >= 1<<5 {
+					lz = 31 // 11111
+				}
 				mlen := 64 - lz - tz // meaningful block size
 				wmlen := mlen
 
@@ -448,6 +451,10 @@ func (bw *BitsWriter) Write(lenb int, data ...byte) {
 
 var debugprint bool
 
+func Debug(b bool) {
+	debug = b
+}
+
 func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int) ([]dataPoint, error) {
 	// var ps []dataPoint
 	// var p dataPoint
@@ -606,7 +613,7 @@ readloop:
 
 			if debug {
 				fmt.Printf("\tvaried-length meaningful block\n")
-				fmt.Printf("\txor: %016x val: %016x (%f)\n", xor, math.Float64bits(p.value), p.value)
+				fmt.Printf("\txor: %016x mlen: %d val: %016x (%f)\n", xor, mlen, math.Float64bits(p.value), p.value)
 			}
 		}
 
