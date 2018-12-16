@@ -282,7 +282,7 @@ func TestBlockReadWrite2(t *testing.T) {
 			fmt.Println("read test ---")
 		}
 
-		debug = true
+		debugCompress = true
 
 		points, err := acv.readFromBlock(buf, points, ts, ts+30)
 		if err != nil {

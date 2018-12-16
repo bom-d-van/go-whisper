@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"math"
 	"os"
 	"time"
 
@@ -31,6 +33,11 @@ func main() {
 		now := int(time.Now().Unix())
 		from := now - ret.MaxRetention()
 		until := now
+
+		fmt.Println(time.Second*time.Duration(ret.MaxRetention()), ret.SecondsPerPoint())
+		log.Printf("from = %+v\n", from)
+		log.Printf("until = %+v\n", until)
+
 		dps1, err := db1.Fetch(from, until)
 		if err != nil {
 			panic(err)
@@ -40,11 +47,25 @@ func main() {
 			panic(err)
 		}
 
-		fmt.Println(time.Duration(ret.MaxRetention()))
+		var nan1, nan2 int
+		for _, p := range dps1.Values() {
+			if !math.IsNaN(p) {
+				nan1++
+			}
+		}
+		for _, p := range dps2.Values() {
+			if !math.IsNaN(p) {
+				nan2++
+			}
+		}
+
+		fmt.Printf("len1 = %d len2 = %d nan1 = %d nan2 = %d\n", len(dps1.Values()), len(dps2.Values()), nan1, nan2)
+
 		if diff := cmp.Diff(dps1, dps2, cmp.AllowUnexported(whisper.TimeSeries{}), cmpopts.EquateNaNs()); diff != "" {
-			// pretty.Println(dps1)
-			// pretty.Println(dps2)
-			fmt.Println(diff)
+			// pretty.Println(dps2.Points())
+			// pretty.Println(dps1.Points()[12324-10 : 12324+10])
+			// fmt.Println(diff)
+			fmt.Printf("error: not matched\n")
 		}
 		// return
 	}
