@@ -307,7 +307,7 @@ func (archive *archiveInfo) blockCount() int {
 
 func (whisper *Whisper) blockCount(archive *archiveInfo) int {
 	// retention.numberOfPoints / whisper.pointsPerBlock
-	return int(math.Ceil(float64(archive.numberOfPoints) / float64(whisper.pointsPerBlock)))
+	return int(math.Ceil(float64(archive.numberOfPoints)/float64(whisper.pointsPerBlock))) + 1
 }
 
 func allocateDiskSpace(file *os.File, remaining int) error {
@@ -858,7 +858,7 @@ func (whisper *Whisper) UpdateMany(points []*TimeSeriesPoint) (err error) {
 
 	now := int(Now().Unix()) // TODO: danger of 2030 something overflow
 
-	log.Printf("len(points) = %+v\n", len(points))
+	// log.Printf("len(points) = %+v\n", len(points))
 
 	var currentPoints []*TimeSeriesPoint
 	for i := 0; i < len(whisper.archives); i++ {
@@ -1076,6 +1076,7 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		// whole-archive rotation detected
 		isFull := true
 		var max, min int
+		var overriddenEnd int
 		for _, b := range archive.blockRanges {
 			isFull = isFull && b.start > 0 && b.end > 0
 			if min == 0 || min > b.start {
@@ -1084,12 +1085,26 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 			if max == 0 || max < b.end {
 				max = b.end
 			}
+			if b.index == nblock.index {
+				overriddenEnd = b.end
+			}
 		}
 		if isFull {
+			var notEnoughBlocks bool
+			if len(archive.blockRanges) > 1 {
+				lowerbound := int(Now().Unix()) - archive.MaxRetention()
+				notEnoughBlocks = lowerbound <= overriddenEnd
+			}
 			total := (max - min) / archive.secondsPerPoint
+			if total < archive.numberOfPoints || notEnoughBlocks {
+				newSize := whisper.avgCompressedPointSize
+				if notEnoughBlocks {
+					// TODO: need to improve
+					newSize += 2.0
+				} else {
+					newSize = float32((float64(archive.numberOfPoints)/float64(total) + 0.0618) * float64(whisper.avgCompressedPointSize))
+				}
 
-			if total < archive.numberOfPoints {
-				newSize := float32((float64(archive.numberOfPoints)/float64(total) + 0.0618) * float64(whisper.avgCompressedPointSize))
 				log.Printf("extend.%d: %f -> %f\n", archive.secondsPerPoint, whisper.avgCompressedPointSize, newSize)
 				if err := whisper.extend(newSize); err != nil {
 					return err

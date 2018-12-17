@@ -10,6 +10,7 @@ import (
 	whisper "github.com/go-graphite/go-whisper"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/kr/pretty"
 )
 
 func main() {
@@ -61,11 +62,11 @@ func main() {
 
 		fmt.Printf("len1 = %d len2 = %d nan1 = %d nan2 = %d\n", len(dps1.Values()), len(dps2.Values()), nan1, nan2)
 
-		if diff := cmp.Diff(dps1, dps2, cmp.AllowUnexported(whisper.TimeSeries{}), cmpopts.EquateNaNs()); diff != "" {
-			// pretty.Println(dps2.Points())
-			// pretty.Println(dps1.Points()[12324-10 : 12324+10])
-			// fmt.Println(diff)
-			fmt.Printf("error: not matched\n")
+		if diff := cmp.Diff(dps1.Points(), dps2.Points(), cmp.AllowUnexported(whisper.TimeSeries{}), cmpopts.EquateNaNs()); diff != "" {
+			fmt.Println(diff)
+			pretty.Println(dps1.Points()[23592])
+			pretty.Println(dps2.Points()[23592])
+			fmt.Printf("error: does not match\n")
 		}
 		// return
 	}

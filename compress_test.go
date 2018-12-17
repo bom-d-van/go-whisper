@@ -709,6 +709,7 @@ func TestCompressedWhisperReadWrite4(t *testing.T) {
 		if err := cdst.archives[i].appendToBlockAndRotate(points); err != nil {
 			t.Fatal(err)
 		}
+		// log.Printf("cdst.avgCompressedPointSize = %+v\n", cdst.avgCompressedPointSize)
 	}
 
 	if err := cdst.writeHeaderCompressed(); err != nil {
