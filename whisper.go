@@ -1094,15 +1094,15 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 				if err := whisper.extend(newSize); err != nil {
 					return err
 				}
-			}
 
-			for _, narchive := range whisper.archives {
-				if narchive.secondsPerPoint == archive.secondsPerPoint {
-					*archive = *narchive
-					return narchive.appendToBlockAndRotate(left)
+				for _, narchive := range whisper.archives {
+					if narchive.secondsPerPoint == archive.secondsPerPoint {
+						*archive = *narchive
+						return narchive.appendToBlockAndRotate(left)
+					}
 				}
+				return nil
 			}
-			return nil
 		}
 
 		archive.cblock = nblock
@@ -1121,6 +1121,7 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 }
 
 // TODO:
+// 	0. test extend with UpdateMany api!
 // 	1. more complex logics of deciding which archive(s) should be resized
 // 	2. add stats
 func (whisper *Whisper) extend(newSize float32) error {
@@ -1172,6 +1173,9 @@ func (whisper *Whisper) extend(newSize float32) error {
 	// important
 	nwhisper.file, err = os.OpenFile(filename, os.O_RDWR, 0666)
 	*whisper = *nwhisper
+	for _, arc := range whisper.archives {
+		arc.whisper = whisper
+	}
 
 	return err
 }
