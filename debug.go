@@ -54,6 +54,7 @@ func (whisper *Whisper) Dump(full bool) {
 	}
 }
 
+// TODO: check if block ranges match data in blocks
 func (archive *archiveInfo) dumpInfo() {
 	fmt.Println("")
 	fmt.Printf("number_of_points:  %d %s\n", archive.numberOfPoints, time.Duration(int(time.Second)*archive.secondsPerPoint*archive.numberOfPoints))

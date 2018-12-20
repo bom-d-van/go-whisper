@@ -1109,6 +1109,7 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 				if err := whisper.extend(newSize); err != nil {
 					return err
 				}
+				log.Printf("extend.end \n")
 
 				for _, narchive := range whisper.archives {
 					if narchive.secondsPerPoint == archive.secondsPerPoint {
@@ -1135,6 +1136,8 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 	return nil
 }
 
+var extended bool
+
 // TODO:
 // 	0. test extend with UpdateMany api!
 // 	1. more complex logics of deciding which archive(s) should be resized
@@ -1147,6 +1150,16 @@ func (whisper *Whisper) extend(newSize float32) error {
 
 	filename := whisper.file.Name()
 	os.Remove(whisper.file.Name() + ".extend")
+
+	// whisper.file.Sync()
+	// if extended {
+	// 	if err := whisper.writeHeaderCompressed(); err != nil {
+	// 		panic(err)
+	// 	}
+	// 	whisper.Close()
+	// 	os.Exit(0)
+	// }
+	// extended = true
 
 	nwhisper, err := CreateWithOptions(
 		whisper.file.Name()+".extend", rets,
@@ -1162,14 +1175,18 @@ func (whisper *Whisper) extend(newSize float32) error {
 		archive.sortBlockRanges()
 
 		for _, block := range archive.blockRanges {
+			log.Printf("block = %+v\n", block)
 			buf := make([]byte, archive.blockSize)
 			if err := whisper.fileReadAt(buf, int64(archive.blockOffset(block.index))); err != nil {
 				return fmt.Errorf("archives[%d].blocks[%d].file.read: %s", i, block.index, err)
 			}
+			log.Printf("buf[:12] = %x\n", buf[:12])
 			dst, err := archive.readFromBlock(buf, []dataPoint{}, block.start, block.end)
 			if err != nil {
 				return fmt.Errorf("archives[%d].blocks[%d].read: %s", i, block.index, err)
 			}
+			// log.Printf("len(dst) = %+v\n", len(dst))
+			// log.Printf("dst[:1] = %+v\n", dst[:1])
 			if err := nwhisper.archives[i].appendToBlockAndRotate(dst); err != nil {
 				return fmt.Errorf("archives[%d].blocks[%d].write: %s", i, block.index, err)
 			}
@@ -1693,6 +1710,7 @@ type blockInfo struct {
 type blockRange struct {
 	index      int
 	start, end int
+	// count      int
 }
 
 func (a *archiveInfo) blockOffset(blockIndex int) int {

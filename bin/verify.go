@@ -10,8 +10,11 @@ import (
 	whisper "github.com/go-graphite/go-whisper"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+
 	"github.com/kr/pretty"
 )
+
+var _ = pretty.Println
 
 func main() {
 	// whisper.Now = func() time.Time {
@@ -48,24 +51,24 @@ func main() {
 			panic(err)
 		}
 
-		var nan1, nan2 int
+		var vals1, vals2 int
 		for _, p := range dps1.Values() {
 			if !math.IsNaN(p) {
-				nan1++
+				vals1++
 			}
 		}
 		for _, p := range dps2.Values() {
 			if !math.IsNaN(p) {
-				nan2++
+				vals2++
 			}
 		}
 
-		fmt.Printf("len1 = %d len2 = %d nan1 = %d nan2 = %d\n", len(dps1.Values()), len(dps2.Values()), nan1, nan2)
+		fmt.Printf("len1 = %d len2 = %d vals1 = %d vals2 = %d\n", len(dps1.Values()), len(dps2.Values()), vals1, vals2)
 
 		if diff := cmp.Diff(dps1.Points(), dps2.Points(), cmp.AllowUnexported(whisper.TimeSeries{}), cmpopts.EquateNaNs()); diff != "" {
-			fmt.Println(diff)
-			pretty.Println(dps1.Points()[23592])
-			pretty.Println(dps2.Points()[23592])
+			// fmt.Println(diff)
+			pretty.Println(dps1.Points()[23517])
+			pretty.Println(dps2.Points()[23517])
 			fmt.Printf("error: does not match\n")
 		}
 		// return

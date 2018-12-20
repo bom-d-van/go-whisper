@@ -705,17 +705,31 @@ func TestCompressedWhisperReadWrite4(t *testing.T) {
 		sort.Slice(points, func(i, j int) bool {
 			return points[i].interval < points[j].interval
 		})
+		var index int
+		for i := 0; i < len(points); i++ {
+			if points[i].interval > 0 {
+				points[index] = points[i]
+				index++
+			}
+		}
+		points = points[:index]
+
+		// log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
+		// log.Printf("points[:10] = %+v\n", points[:10])
 
 		if err := cdst.archives[i].appendToBlockAndRotate(points); err != nil {
 			t.Fatal(err)
 		}
 		// log.Printf("cdst.avgCompressedPointSize = %+v\n", cdst.avgCompressedPointSize)
+		// break
 	}
 
 	if err := cdst.writeHeaderCompressed(); err != nil {
 		t.Fatal(err)
 	}
 	cdst.Close()
+
+	// cdst.Dump(false)
 
 	// pretty.Println(cdst)
 	// for _, archive := range cdst.archives {

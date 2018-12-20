@@ -64,8 +64,13 @@ func Debug(compress, bitsWrite bool) {
 func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written int, left []dataPoint) {
 	var bw BitsWriter
 	bw.buf = buf
-	bw.buf[0] = a.cblock.lastByte
 	bw.bitPos = a.cblock.lastByteBitPos
+
+	// set and clean possible end-of-block maker
+	bw.buf[0] = a.cblock.lastByte
+	bw.buf[0] &= 0xFF ^ (1<<uint(a.cblock.lastByteBitPos+1) - 1)
+	bw.buf[1] = 0
+
 	defer func() {
 		a.cblock.lastByte = bw.buf[bw.index]
 		a.cblock.lastByteBitPos = int(bw.bitPos)
@@ -78,6 +83,12 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			}
 			a.blockRanges[i].start = a.cblock.p0.interval
 			a.blockRanges[i].end = a.cblock.pn1.interval
+
+			if a.cblock.index == 0 && a.secondsPerPoint == 1800 {
+				log.Printf("a.secondsPerPoint = %+v\n", a.secondsPerPoint)
+				log.Printf("a.cblock = %+v\n", a.cblock)
+				log.Printf("buf[:12] = %x\n", buf[:12])
+			}
 			break
 		}
 
@@ -97,10 +108,6 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 	}
 
 	// TODO: return error if interval is not monotonically increasing
-
-	// clean possible end-of-block maker
-	bw.buf[0] &= 0xFF ^ (1<<uint(a.cblock.lastByteBitPos+1) - 1)
-	bw.buf[1] = 0
 
 	for i, p := range ps {
 		if p.interval == 0 {
@@ -123,6 +130,18 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			if debugCompress {
 				fmt.Printf("begin\n")
 				fmt.Printf("%d: %f\n", p.interval, p.value)
+			}
+
+			if p.interval == 1524474000 && a.secondsPerPoint == 1800 {
+				// log.Printf("a.secondsPerPoint = %+v\n", a.secondsPerPoint)
+				// log.Printf("a.cblock.index = %+v\n", a.cblock.index)
+				// log.Println("===")
+				// log.Println("===")
+				// a.dumpInfo()
+				log.Printf("a.cblock.p0.interval = %+v\n", a.cblock.p0.interval)
+				log.Printf("p = %+v\n", p)
+				log.Printf("p = %x\n", p.Bytes())
+				log.Printf("buf[:12] = %x\n", buf[:12])
 			}
 
 			continue
@@ -392,6 +411,11 @@ func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int)
 	if start <= p.interval && p.interval <= end {
 		dst = append(dst, p)
 	}
+
+	// if a.secondsPerPoint == 1800 {
+	// 	log.Printf("buf[:12] = %x\n", buf[:12])
+	// 	log.Printf("p = %+v\n", p)
+	// }
 
 	var pn1, pn2 *dataPoint = &p, &p
 
