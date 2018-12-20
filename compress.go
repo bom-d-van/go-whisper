@@ -84,11 +84,6 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			a.blockRanges[i].start = a.cblock.p0.interval
 			a.blockRanges[i].end = a.cblock.pn1.interval
 
-			if a.cblock.index == 0 && a.secondsPerPoint == 1800 {
-				log.Printf("a.secondsPerPoint = %+v\n", a.secondsPerPoint)
-				log.Printf("a.cblock = %+v\n", a.cblock)
-				log.Printf("buf[:12] = %x\n", buf[:12])
-			}
 			break
 		}
 
@@ -130,18 +125,6 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			if debugCompress {
 				fmt.Printf("begin\n")
 				fmt.Printf("%d: %f\n", p.interval, p.value)
-			}
-
-			if p.interval == 1524474000 && a.secondsPerPoint == 1800 {
-				// log.Printf("a.secondsPerPoint = %+v\n", a.secondsPerPoint)
-				// log.Printf("a.cblock.index = %+v\n", a.cblock.index)
-				// log.Println("===")
-				// log.Println("===")
-				// a.dumpInfo()
-				log.Printf("a.cblock.p0.interval = %+v\n", a.cblock.p0.interval)
-				log.Printf("p = %+v\n", p)
-				log.Printf("p = %x\n", p.Bytes())
-				log.Printf("buf[:12] = %x\n", buf[:12])
 			}
 
 			continue
@@ -283,7 +266,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		}
 
 		// TODO: fix it
-		if bw.isFull() || bw.index+a.cblock.lastByteOffset+1 >= a.blockOffset(a.cblock.index)+a.blockSize {
+		if bw.isFull() || bw.index+a.cblock.lastByteOffset+10 >= a.blockOffset(a.cblock.index)+a.blockSize {
 			// reset dirty buffer tail
 			bw.buf[oldBwIndex] = oldBwLastByte
 			for i := oldBwIndex + 1; i <= bw.index; i++ {
@@ -411,12 +394,6 @@ func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int)
 	if start <= p.interval && p.interval <= end {
 		dst = append(dst, p)
 	}
-
-	// if a.secondsPerPoint == 1800 {
-	// 	log.Printf("buf[:12] = %x\n", buf[:12])
-	// 	log.Printf("p = %+v\n", p)
-	// }
-
 	var pn1, pn2 *dataPoint = &p, &p
 
 	var debugindex int

@@ -67,8 +67,8 @@ func main() {
 
 		if diff := cmp.Diff(dps1.Points(), dps2.Points(), cmp.AllowUnexported(whisper.TimeSeries{}), cmpopts.EquateNaNs()); diff != "" {
 			// fmt.Println(diff)
-			pretty.Println(dps1.Points()[23517])
-			pretty.Println(dps2.Points()[23517])
+			// pretty.Println(dps1.Points()[23517])
+			// pretty.Println(dps2.Points()[23517])
 			fmt.Printf("error: does not match\n")
 		}
 		// return
