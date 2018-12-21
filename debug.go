@@ -59,9 +59,10 @@ func (archive *archiveInfo) dumpInfo() {
 	fmt.Println("")
 	fmt.Printf("number_of_points:  %d %s\n", archive.numberOfPoints, time.Duration(int(time.Second)*archive.secondsPerPoint*archive.numberOfPoints))
 	fmt.Printf("seconds_per_point: %d %s\n", archive.secondsPerPoint, time.Duration(int(time.Second)*archive.secondsPerPoint))
-	fmt.Printf("block_size:        %d\n", archive.blockSize)
 	fmt.Printf("buffer_size:       %d\n", archive.bufferSize)
+	fmt.Printf("block_size:        %d\n", archive.blockSize)
 	fmt.Printf("point_size:        %f\n", archive.avgCompressedPointSize)
+	fmt.Printf("block_count:       %d\n", archive.blockCount)
 	fmt.Printf("cblock\n")
 	fmt.Printf("  index:     %d\n", archive.cblock.index)
 	fmt.Printf("  p[0].interval:     %d\n", archive.cblock.p0.interval)
@@ -71,9 +72,10 @@ func (archive *archiveInfo) dumpInfo() {
 	fmt.Printf("  last_byte_offset:  %d\n", archive.cblock.lastByteOffset)
 	fmt.Printf("  last_byte_bit_pos: %d\n", archive.cblock.lastByteBitPos)
 
-	archive.sortBlockRanges()
+	// archive.sortBlockRanges()
 
-	for _, block := range archive.blockRanges {
-		fmt.Printf("%d: %d-%d %d\n", block.index, block.start, block.end, (block.end-block.start)/archive.secondsPerPoint+1)
+	for _, block := range archive.getSortedBlockRanges() {
+		// fmt.Printf("%d: %d-%d %d %d\n", block.index, block.start, block.end, (block.end-block.start)/archive.secondsPerPoint+1, archive.blockOffset(block.index))
+		fmt.Printf("%d: %d-%d %d %d\n", block.index, block.start, block.end, block.count, archive.blockOffset(block.index))
 	}
 }

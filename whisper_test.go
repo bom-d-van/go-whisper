@@ -63,7 +63,11 @@ func TestParseRetentionDefs(t *testing.T) {
 }
 
 func TestSortRetentions(t *testing.T) {
-	retentions := Retentions{{300, 12}, {60, 30}, {1, 300}}
+	retentions := Retentions{
+		{secondsPerPoint: 300, numberOfPoints: 12},
+		{secondsPerPoint: 60, numberOfPoints: 30},
+		{secondsPerPoint: 1, numberOfPoints: 300},
+	}
 	sort.Sort(retentionsByPrecision{retentions})
 	if retentions[0].secondsPerPoint != 1 {
 		t.Fatalf("Retentions array is not sorted")
@@ -77,7 +81,11 @@ func setUpCreate() (path string, fileExists func(string) bool, archiveList Reten
 		fi, _ := os.Lstat(path)
 		return fi != nil
 	}
-	archiveList = Retentions{{1, 300}, {60, 30}, {300, 12}}
+	archiveList = Retentions{
+		{secondsPerPoint: 1, numberOfPoints: 300},
+		{secondsPerPoint: 60, numberOfPoints: 30},
+		{secondsPerPoint: 300, numberOfPoints: 12},
+	}
 	tearDown = func() {
 		os.Remove(path)
 	}
@@ -166,7 +174,7 @@ func TestCreateFileAlreadyExists(t *testing.T) {
 func TestCreateFileInvalidRetentionDefs(t *testing.T) {
 	path, _, retentions, tearDown := setUpCreate()
 	// Add a small retention def on the end
-	retentions = append(retentions, &Retention{1, 200})
+	retentions = append(retentions, &Retention{secondsPerPoint: 1, numberOfPoints: 200})
 	_, err := Create(path, retentions, Average, 0.5)
 	if err == nil {
 		t.Fatalf("Invalid retention definitions should cause create to fail.")

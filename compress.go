@@ -77,15 +77,19 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		a.cblock.lastByteOffset += bw.index
 		written = bw.index + 1
 
-		for i, block := range a.blockRanges {
-			if a.cblock.index != block.index {
-				continue
-			}
-			a.blockRanges[i].start = a.cblock.p0.interval
-			a.blockRanges[i].end = a.cblock.pn1.interval
+		// for i, block := range a.blockRanges {
+		// 	if a.cblock.index != block.index {
+		// 		continue
+		// 	}
+		// 	a.blockRanges[i].start = a.cblock.p0.interval
+		// 	a.blockRanges[i].end = a.cblock.pn1.interval
+		// 	a.blockRanges[i].count = a.cblock.count
 
-			break
-		}
+		// 	break
+		// }
+		a.blockRanges[a.cblock.index].start = a.cblock.p0.interval
+		a.blockRanges[a.cblock.index].end = a.cblock.pn1.interval
+		a.blockRanges[a.cblock.index].count = a.cblock.count
 
 		// write end-of-block marker if there is enough space
 		bw.WriteUint(4, 0x0f)
@@ -286,6 +290,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 
 		a.cblock.pn2 = a.cblock.pn1
 		a.cblock.pn1 = p
+		a.cblock.count++
 
 		if debugCompress {
 			start := bw.index - 8
@@ -397,6 +402,10 @@ func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int)
 	var pn1, pn2 *dataPoint = &p, &p
 
 	var debugindex int
+
+	// if a.secondsPerPoint == 60 {
+	// 	log.Printf("buf[:10] = %X\n", buf[:10])
+	// }
 
 readloop:
 	for {

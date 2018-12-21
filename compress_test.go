@@ -498,7 +498,10 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 	// }
 	// pretty.Println(rets)
 
-	fpath := "comp.whisper"
+	fpath := "test3.wsp"
+	if *compressed {
+		fpath += ".cwsp"
+	}
 	os.Remove(fpath)
 	whisper, err := CreateWithOptions(
 		fpath,
