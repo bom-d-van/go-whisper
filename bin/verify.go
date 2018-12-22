@@ -22,9 +22,9 @@ func init() {
 }
 
 func main() {
-	whisper.Now = func() time.Time {
-		return time.Unix(1544478230, 0)
-	}
+	// whisper.Now = func() time.Time {
+	// 	return time.Unix(1544478230, 0)
+	// }
 
 	file1 := os.Args[1]
 	file2 := os.Args[2]

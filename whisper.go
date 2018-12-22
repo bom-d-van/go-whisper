@@ -1542,7 +1542,11 @@ func (whisper *Whisper) Fetch(fromTime, untilTime int) (timeSeries *TimeSeries, 
 		}
 		step := archive.secondsPerPoint
 		for _, dPoint := range series {
-			values[(dPoint.interval-fromInterval)/archive.secondsPerPoint] = dPoint.value
+			index := (dPoint.interval - fromInterval) / archive.secondsPerPoint
+			if index >= len(values) {
+				break
+			}
+			values[index] = dPoint.value
 		}
 		return &TimeSeries{fromInterval, untilInterval, step, values}, nil
 	} else {
