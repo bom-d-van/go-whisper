@@ -5,6 +5,48 @@ import (
 	"time"
 )
 
+func (whisper *Whisper) CheckIntegrity() {
+	meta := make([]byte, whisper.MetadataSize())
+	if err := whisper.fileReadAt(meta, 0); err != nil {
+		panic(err)
+	}
+	empty := [4]byte{}
+	copy(meta[whisper.crc32Offset():], empty[:])
+	metacrc := crc32(meta, 0)
+	if metacrc != whisper.crc32 {
+		fmt.Printf("error: header crc: disk: %08x cal: %08x\n", whisper.crc32, metacrc)
+	}
+
+	for _, arc := range whisper.archives {
+		for _, block := range arc.blockRanges {
+			// fmt.Printf("archive.%d %s block %d\n", arc.secondsPerPoint, time.Duration(int(time.Second)*arc.secondsPerPoint*arc.numberOfPoints), block.index)
+			if block.start == 0 {
+				// fmt.Printf("    [empty]\n")
+				continue
+			}
+
+			buf := make([]byte, arc.blockSize)
+			if err := whisper.fileReadAt(buf, int64(arc.blockOffset(block.index))); err != nil {
+				panic(err)
+			}
+
+			_, endOffset, err := arc.readFromBlock(buf, []dataPoint{}, block.start, block.end)
+			if err != nil {
+				panic(err)
+			}
+
+			if block.index != arc.cblock.index {
+				endOffset += 1
+			}
+			crc := crc32(buf[:endOffset], 0)
+			if crc != block.crc32 {
+
+				fmt.Printf("error: archive.%d.block.%d crc32: %08x check: %08x endOffset: %d/%d\n", arc.secondsPerPoint, block.index, block.crc32, crc, endOffset, int(arc.blockOffset(block.index))+endOffset)
+			}
+		}
+	}
+}
+
 func (whisper *Whisper) Dump(full bool) {
 	if !whisper.compressed {
 		panic("Dump works only for compressed whisper files.")
@@ -17,6 +59,7 @@ func (whisper *Whisper) Dump(full bool) {
 	fmt.Printf("comp_version:              %d\n", whisper.compVersion)
 	fmt.Printf("points_per_block:          %d\n", whisper.pointsPerBlock)
 	fmt.Printf("avg_compressed_point_size: %f\n", whisper.avgCompressedPointSize)
+	fmt.Printf("crc32:                     %X\n", whisper.crc32)
 
 	for _, arc := range whisper.archives {
 		arc.dumpInfo()
@@ -38,16 +81,29 @@ func (whisper *Whisper) Dump(full bool) {
 		}
 
 		for _, block := range arc.blockRanges {
+			fmt.Printf("archive.%d %s block %d\n", arc.secondsPerPoint, time.Duration(int(time.Second)*arc.secondsPerPoint*arc.numberOfPoints), block.index)
+			if block.start == 0 {
+				fmt.Printf("    [empty]\n")
+				continue
+			}
+
 			buf := make([]byte, arc.blockSize)
-			fmt.Printf("archive %s block %d\n", time.Duration(int(time.Second)*arc.secondsPerPoint*arc.numberOfPoints), block.index)
 			if err := whisper.fileReadAt(buf, int64(arc.blockOffset(block.index))); err != nil {
 				panic(err)
 			}
-			dps, err := arc.readFromBlock(buf, []dataPoint{}, block.start, block.end)
+			dps, endOffset, err := arc.readFromBlock(buf, []dataPoint{}, block.start, block.end)
 			if err != nil {
 				panic(err)
 			}
+
+			if block.index != arc.cblock.index {
+				endOffset += 1
+			}
+			crc := crc32(buf[:endOffset], 0)
+			fmt.Printf("crc32: %08x check: %08x endOffset: %d\n", block.crc32, crc, int(arc.blockOffset(block.index))+endOffset)
+
 			for i, p := range dps {
+				// continue
 				fmt.Printf("  % 4d %d: %f\n", i, p.interval, p.value)
 			}
 		}
@@ -71,11 +127,12 @@ func (archive *archiveInfo) dumpInfo() {
 	fmt.Printf("  last_byte:         %08b\n", archive.cblock.lastByte)
 	fmt.Printf("  last_byte_offset:  %d\n", archive.cblock.lastByteOffset)
 	fmt.Printf("  last_byte_bit_pos: %d\n", archive.cblock.lastByteBitPos)
+	fmt.Printf("  crc32:             %08x\n", archive.cblock.crc32)
 
 	// archive.sortBlockRanges()
 
 	for _, block := range archive.getSortedBlockRanges() {
 		// fmt.Printf("%d: %d-%d %d %d\n", block.index, block.start, block.end, (block.end-block.start)/archive.secondsPerPoint+1, archive.blockOffset(block.index))
-		fmt.Printf("%d: %d-%d %d %d\n", block.index, block.start, block.end, block.count, archive.blockOffset(block.index))
+		fmt.Printf("%02d: %10d - %10d count:%5d offset:%d crc32:%08x\n", block.index, block.start, block.end, block.count, archive.blockOffset(block.index), block.crc32)
 	}
 }

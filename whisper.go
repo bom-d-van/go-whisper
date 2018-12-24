@@ -26,12 +26,17 @@ const (
 	MetadataSize    = 16
 	ArchiveInfoSize = 12
 
-	CompressedMetadataSize    = 24 + 4
-	VersionSize               = 1
-	CompressedArchiveInfoSize = 10*4 + 3*8 + 4 + 4 + 4 // 64
-	avgCompressedPointSize    = 2
-	BlockRangeSize            = 8 + 4
-	endOfBlockSize            = 5
+	CompressedMetadataSize     = 28 + FreeCompressedMetadataSize
+	FreeCompressedMetadataSize = 16
+
+	VersionSize = 1
+
+	CompressedArchiveInfoSize     = 80 + FreeCompressedArchiveInfoSize
+	FreeCompressedArchiveInfoSize = 32
+
+	avgCompressedPointSize = 2
+	BlockRangeSize         = 16
+	endOfBlockSize         = 5
 )
 
 const (
@@ -156,9 +161,11 @@ type Whisper struct {
 	archives          []*archiveInfo
 
 	compressed             bool
-	compVersion            int
+	compVersion            uint8
 	pointsPerBlock         int
 	avgCompressedPointSize float32
+
+	crc32 uint32
 
 	noPropagation bool
 }
@@ -224,6 +231,7 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 	whisper.xFilesFactor = xFilesFactor
 
 	whisper.compressed = options.Compressed
+	whisper.compVersion = 1
 	whisper.pointsPerBlock = options.PointsPerBlock
 	whisper.avgCompressedPointSize = options.PointSize
 	for _, retention := range retentions {
@@ -406,10 +414,7 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 
 	// read the metadata
 	if whisper.compressed {
-		b = make([]byte, CompressedMetadataSize)
-		err = whisper.readHeaderCompressed()
-
-		return whisper, err
+		return whisper, whisper.readHeaderCompressed()
 	}
 
 	b = make([]byte, MetadataSize)
@@ -461,7 +466,6 @@ func (whisper *Whisper) initMetaInfo() {
 		}
 		arc.whisper = whisper
 
-		// arc.initBlockRanges()
 		for i := range arc.blockRanges {
 			arc.blockRanges[i].index = i
 		}
@@ -479,15 +483,6 @@ func (whisper *Whisper) initMetaInfo() {
 func (archive *archiveInfo) hasBuffer() bool {
 	return archive.bufferSize > 0
 }
-
-// func (arc *archiveInfo) initBlockRanges() {
-// 	for i := range arc.blockRanges {
-// 		arc.blockRanges[i].index = i
-// 	}
-
-// 	// TODO: remove?
-// 	// arc.sortBlockRanges()
-// }
 
 // [whisper header]
 // [archive_0 header]
@@ -513,7 +508,7 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 		return
 	}
 
-	whisper.compVersion = int(b[offset])
+	whisper.compVersion = b[offset]
 	offset += 1
 
 	whisper.aggregationMethod = AggregationMethod(unpackInt(b[offset : offset+IntSize]))
@@ -524,12 +519,15 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 	offset += FloatSize
 	whisper.pointsPerBlock = unpackInt(b[offset : offset+IntSize])
 	offset += IntSize
-	whisper.compVersion = unpackInt(b[offset : offset+IntSize])
-	offset += IntSize
+	// whisper.compVersion = unpackInt(b[offset : offset+IntSize])
+	// offset += IntSize
 	archiveCount := unpackInt(b[offset : offset+IntSize])
 	offset += IntSize
 	whisper.avgCompressedPointSize = unpackFloat32(b[offset : offset+FloatSize])
 	offset += FloatSize
+	whisper.crc32 = uint32(unpackInt(b[offset : offset+IntSize]))
+	offset += IntSize
+	offset += FreeCompressedMetadataSize
 
 	whisper.archives = make([]*archiveInfo, archiveCount)
 	for i := 0; i < archiveCount; i++ {
@@ -539,7 +537,7 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 			err = fmt.Errorf("Unable to read archive %d metadata: %s", i, err)
 			return
 		}
-		offset = 0
+		var offset int
 		var arc archiveInfo
 
 		arc.offset = unpackInt(b[offset : offset+IntSize])
@@ -557,12 +555,6 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 
 		arc.cblock.index = unpackInt(b[offset : offset+IntSize])
 		offset += IntSize
-		// arc.cblock.offset = unpackInt(b[offset : offset+IntSize])
-		// offset += IntSize
-		// arc.cblock.size = unpackInt(b[offset : offset+IntSize])
-		// offset += IntSize
-		// arc.cblock.crc32 = unpackInt(b[offset : offset+IntSize])
-		// offset += IntSize
 		arc.cblock.p0.interval = unpackInt(b[offset : offset+IntSize])
 		offset += IntSize
 		arc.cblock.p0.value = unpackFloat64(b[offset : offset+Float64Size])
@@ -580,6 +572,8 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 		arc.cblock.lastByteBitPos = unpackInt(b[offset : offset+IntSize])
 		offset += IntSize
 		arc.cblock.count = unpackInt(b[offset : offset+IntSize])
+		offset += IntSize
+		arc.cblock.crc32 = uint32(unpackInt(b[offset : offset+IntSize]))
 		offset += IntSize
 
 		whisper.archives[i] = &arc
@@ -604,6 +598,8 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 			arc.blockRanges[i].end = unpackInt(b[offset : offset+IntSize])
 			offset += IntSize
 			arc.blockRanges[i].count = unpackInt(b[offset : offset+IntSize])
+			offset += IntSize
+			arc.blockRanges[i].crc32 = uint32(unpackInt(b[offset : offset+IntSize]))
 			offset += IntSize
 		}
 
@@ -642,6 +638,10 @@ func (whisper *Whisper) writeHeader() (err error) {
 	return err
 }
 
+func (whisper *Whisper) crc32Offset() int {
+	return len(compressedMagicString) + VersionSize + CompressedMetadataSize - 4 - FreeCompressedMetadataSize
+}
+
 func (whisper *Whisper) writeHeaderCompressed() (err error) {
 	b := make([]byte, whisper.MetadataSize())
 	i := 0
@@ -651,16 +651,19 @@ func (whisper *Whisper) writeHeaderCompressed() (err error) {
 	copy(b, compressedMagicString)
 
 	// version
-	b[i] = 1
-	i += 1
+	b[i] = whisper.compVersion
+	i += VersionSize
 
 	i += packInt(b, int(whisper.aggregationMethod), i)
 	i += packInt(b, whisper.maxRetention, i)
 	i += packFloat32(b, whisper.xFilesFactor, i)
 	i += packInt(b, whisper.pointsPerBlock, i)
-	i += packInt(b, whisper.compVersion, i)
+	// i += packInt(b, whisper.compVersion, i)
 	i += packInt(b, len(whisper.archives), i)
 	i += packFloat32(b, whisper.avgCompressedPointSize, i)
+	log.Printf("crcoffset = %+v\n", i)
+	i += packInt(b, 0, i) // crc32 always write at the end of whisper meta info header and before archive header
+	i += FreeCompressedMetadataSize
 
 	for _, archive := range whisper.archives {
 		i += packInt(b, archive.offset, i)
@@ -671,9 +674,6 @@ func (whisper *Whisper) writeHeaderCompressed() (err error) {
 		i += packFloat32(b, archive.avgCompressedPointSize, i)
 
 		i += packInt(b, archive.cblock.index, i)
-		// i += packInt(b, archive.cblock.offset, i)
-		// i += packInt(b, archive.cblock.size, i)
-		// i += packInt(b, archive.cblock.crc32, i)
 		i += packInt(b, archive.cblock.p0.interval, i)
 		i += packFloat64(b, archive.cblock.p0.value, i)
 		i += packInt(b, archive.cblock.pn1.interval, i)
@@ -683,6 +683,9 @@ func (whisper *Whisper) writeHeaderCompressed() (err error) {
 		i += packInt(b, int(archive.cblock.lastByte), i)
 		i += packInt(b, archive.cblock.lastByteBitPos, i)
 		i += packInt(b, archive.cblock.count, i)
+		i += packInt(b, int(archive.cblock.crc32), i)
+
+		i += FreeCompressedArchiveInfoSize
 	}
 
 	// write block_range_info and buffer
@@ -695,12 +698,16 @@ func (whisper *Whisper) writeHeaderCompressed() (err error) {
 			i += packInt(b, bran.start, i)
 			i += packInt(b, bran.end, i)
 			i += packInt(b, bran.count, i)
+			i += packInt(b, int(bran.crc32), i)
 		}
 
 		if archive.hasBuffer() {
 			i += copy(b[i:], archive.buffer)
 		}
 	}
+
+	whisper.crc32 = crc32(b, 0)
+	packInt(b, int(whisper.crc32), whisper.crc32Offset())
 
 	if err := whisper.fileWriteAt(b, 0); err != nil {
 		return err
@@ -1060,16 +1067,13 @@ func (whisper *Whisper) getNextArchive(higher *archiveInfo) *archiveInfo {
 
 func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 	whisper := archive.whisper // TODO: optimize away?
-	blockBuffer := make([]byte, archive.blockSize)
 
-	// if archive.secondsPerPoint == 60 {
-	// 	log.Printf("dps[:10] = %+v\n", dps[:10])
-	// 	log.Printf("len(dps) = %+v\n", len(dps))
-	// 	log.Printf("archive.cblock.lastByteOffset = %+v\n", archive.cblock.lastByteOffset)
-	// }
+	// TODO: optimize?
+	// blockBuffer := make([]byte, archive.blockSize)
+	blockBuffer := make([]byte, len(dps)*PointSize+endOfBlockSize)
 
 	for {
-		size, left := archive.appendPointsToBlock(blockBuffer, dps...)
+		size, left, rotate := archive.appendPointsToBlock(blockBuffer, dps...)
 
 		// flush block
 		end := size + endOfBlockSize // include end-of-block marker
@@ -1102,6 +1106,11 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 
 		if len(left) == 0 {
 			break
+		}
+		dps = left
+
+		if !rotate {
+			continue
 		}
 
 		// archive.blockRanges[archive.cblock.index].end = archive.cblock.pn1.interval
@@ -1176,8 +1185,6 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		// 		break
 		// 	}
 		// }
-
-		dps = left
 	}
 
 	return nil
@@ -1235,7 +1242,7 @@ func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize f
 			if err := whisper.fileReadAt(buf, int64(archive.blockOffset(block.index))); err != nil {
 				return fmt.Errorf("archives[%d].blocks[%d].file.read: %s", i, block.index, err)
 			}
-			dst, err := archive.readFromBlock(buf, []dataPoint{}, block.start, block.end)
+			dst, _, err := archive.readFromBlock(buf, []dataPoint{}, block.start, block.end)
 			if err != nil {
 				return fmt.Errorf("archives[%d].blocks[%d].read: %s", i, block.index, err)
 			}
@@ -1420,7 +1427,7 @@ func (whisper *Whisper) fetchCompressed(start, end int64, archive *archiveInfo) 
 			}
 
 			var err error
-			dst, err = archive.readFromBlock(buf, dst, int(start), int(end))
+			dst, _, err = archive.readFromBlock(buf, dst, int(start), int(end))
 			if err != nil {
 				return dst, err
 			}
@@ -1757,8 +1764,8 @@ type archiveInfo struct {
 }
 
 type blockInfo struct {
-	index int `meta:"size:4"`
-	// crc32          int
+	index          int `meta:"size:4"`
+	crc32          uint32
 	p0, pn1, pn2   dataPoint `meta:"size:12"` // pn1: point at len(block_points) - 1
 	lastByte       byte      `meta:"size:4"`  // TODO: make it 1
 	lastByteOffset int       `meta:"size:4"`
@@ -1770,6 +1777,10 @@ type blockRange struct {
 	index      int
 	start, end int
 	count      int
+	crc32      uint32
+
+	// TODO
+	// endOffset uint8
 }
 
 func (a *archiveInfo) blockOffset(blockIndex int) int {
@@ -1991,4 +2002,17 @@ func unpackDataPointsStrict(b []byte) (series []dataPoint) {
 */
 func mod(a, b int) int {
 	return a - (b * int(math.Floor(float64(a)/float64(b))))
+}
+
+const polynomial uint32 = 0xEDB88320
+
+func crc32(data []byte, prev uint32) uint32 {
+	crc := prev ^ 0xFFFFFFFF
+	for _, b := range data {
+		crc ^= uint32(b)
+		for i := 0; i < 8; i++ {
+			crc = (crc >> 1) ^ (uint32(-1*int32(crc&1)) & polynomial)
+		}
+	}
+	return crc ^ 0xFFFFFFFF
 }

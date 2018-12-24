@@ -61,7 +61,7 @@ func Debug(compress, bitsWrite bool) {
 // TODO: drop ...dataPoint
 //
 // 7 6 5 4 3 2 1 0
-func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written int, left []dataPoint) {
+func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written int, left []dataPoint, rotate bool) {
 	var bw BitsWriter
 	bw.buf = buf
 	bw.bitPos = a.cblock.lastByteBitPos
@@ -77,23 +77,29 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		a.cblock.lastByteOffset += bw.index
 		written = bw.index + 1
 
-		// for i, block := range a.blockRanges {
-		// 	if a.cblock.index != block.index {
-		// 		continue
-		// 	}
-		// 	a.blockRanges[i].start = a.cblock.p0.interval
-		// 	a.blockRanges[i].end = a.cblock.pn1.interval
-		// 	a.blockRanges[i].count = a.cblock.count
-
-		// 	break
-		// }
-		a.blockRanges[a.cblock.index].start = a.cblock.p0.interval
-		a.blockRanges[a.cblock.index].end = a.cblock.pn1.interval
-		a.blockRanges[a.cblock.index].count = a.cblock.count
+		if bw.index >= 5 {
+			log.Printf("a.cblock.lastByteOffset = %+v\n", a.cblock.lastByteOffset)
+			log.Printf("%d.%d.bw.buf[bw.index-5:bw.index] = %08b\n", a.secondsPerPoint, a.cblock.index, bw.buf[bw.index:bw.index+5])
+		}
 
 		// write end-of-block marker if there is enough space
 		bw.WriteUint(4, 0x0f)
 		bw.WriteUint(32, 0)
+
+		if bw.index >= 5 {
+			log.Printf("%d.%d.bw.buf[bw.index-5:bw.index] = %08b\n", a.secondsPerPoint, a.cblock.index, bw.buf[bw.index-5:bw.index])
+		}
+
+		if rotate {
+			a.cblock.crc32 = crc32(buf[:written], a.cblock.crc32)
+		} else if written-1 > 0 {
+			a.cblock.crc32 = crc32(buf[:written-1], a.cblock.crc32)
+		}
+
+		a.blockRanges[a.cblock.index].start = a.cblock.p0.interval
+		a.blockRanges[a.cblock.index].end = a.cblock.pn1.interval
+		a.blockRanges[a.cblock.index].count = a.cblock.count
+		a.blockRanges[a.cblock.index].crc32 = a.cblock.crc32
 
 		if debugCompress {
 			log.Printf("bw.buf[bw.index-10:bw.index+10] = %08b\n", bw.buf[bw.index-10:bw.index+10])
@@ -270,7 +276,10 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		}
 
 		// TODO: fix it
-		if bw.isFull() || bw.index+a.cblock.lastByteOffset+10 >= a.blockOffset(a.cblock.index)+a.blockSize {
+		if bw.isFull() || bw.index+a.cblock.lastByteOffset+endOfBlockSize >= a.blockOffset(a.cblock.index)+a.blockSize {
+			// TODO: optimize
+			rotate = bw.index+a.cblock.lastByteOffset+endOfBlockSize >= a.blockOffset(a.cblock.index)+a.blockSize
+
 			// reset dirty buffer tail
 			bw.buf[oldBwIndex] = oldBwLastByte
 			for i := oldBwIndex + 1; i <= bw.index; i++ {
@@ -389,7 +398,7 @@ func (bw *BitsWriter) Write(lenb int, data ...byte) {
 	}
 }
 
-func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int) ([]dataPoint, error) {
+func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int) ([]dataPoint, int, error) {
 	var br BitsReader
 	br.buf = buf
 	br.bitPos = 7
@@ -399,9 +408,10 @@ func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int)
 	if start <= p.interval && p.interval <= end {
 		dst = append(dst, p)
 	}
-	var pn1, pn2 *dataPoint = &p, &p
 
+	var pn1, pn2 *dataPoint = &p, &p
 	var debugindex int
+	var exitByEOB bool
 
 	// if a.secondsPerPoint == 60 {
 	// 	log.Printf("buf[:10] = %X\n", buf[:10])
@@ -443,11 +453,12 @@ readloop:
 		default:
 			log.Printf("br.current = %+v\n", br.current)
 			log.Printf("br.bitPos = %+v\n", br.bitPos)
+			log.Printf("len(buf) = %+v\n", len(buf))
 			if br.current >= len(buf)-1 {
 				break readloop
 			}
 			start, end, data := br.trailingDebug()
-			return dst, fmt.Errorf("unknown timestamp prefix (archive[%d]): %04b at %d@%d, context[%d-%d] = %08b len(dst) = %d", a.secondsPerPoint, br.Peek(4), br.current, br.bitPos, start, end, data, len(dst))
+			return dst, br.current, fmt.Errorf("unknown timestamp prefix (archive[%d]): %04b at %d@%d, context[%d-%d] = %08b len(dst) = %d", a.secondsPerPoint, br.Peek(4), br.current, br.bitPos, start, end, data, len(dst))
 		}
 
 		br.Read(skip)
@@ -465,6 +476,7 @@ readloop:
 			break readloop
 		case 32:
 			if delta == 0 {
+				exitByEOB = true
 				break readloop
 			}
 			p.interval = delta
@@ -537,16 +549,6 @@ readloop:
 		pn2 = pn1
 		pn1 = &p
 
-		if p.interval == 1431672170 {
-			log.Printf("p = %+v\n", p)
-			pretty.Println(dst[len(dst)-10:])
-			log.Printf("br.current = %+v\n", br.current)
-			log.Printf("len(br.buf) = %+v\n", len(br.buf))
-			log.Printf("br.bitPos = %+v\n", br.bitPos)
-			log.Printf("br.buf[len(buf)-10:] = %08b\n", br.buf[len(buf)-10:])
-			debugindex = len(dst)
-		}
-
 		if start <= p.interval && p.interval <= end {
 			dst = append(dst, p)
 		}
@@ -559,7 +561,12 @@ readloop:
 		pretty.Println(dst[debugindex-10 : debugindex+10])
 	}
 
-	return dst, nil
+	endOffset := br.current
+	if exitByEOB && endOffset > endOfBlockSize {
+		endOffset -= endOfBlockSize - 1
+	}
+
+	return dst, endOffset, nil
 }
 
 type BitsReader struct {

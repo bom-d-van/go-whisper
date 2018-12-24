@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"os/exec"
 	"reflect"
 	"sort"
 	"testing"
@@ -163,7 +164,7 @@ func TestBlockReadWrite1(t *testing.T) {
 		}
 
 		buf := make([]byte, acv.blockSize)
-		written, left := acv.appendPointsToBlock(buf, input...)
+		written, left, _ := acv.appendPointsToBlock(buf, input...)
 		// fmt.Printf("%08b\n", buf[:8])
 		// fmt.Printf("%08b\n", buf[8:16])
 		// fmt.Printf("%08b\n", buf[16:24])
@@ -189,7 +190,7 @@ func TestBlockReadWrite1(t *testing.T) {
 			fmt.Println("read test ---")
 		}
 
-		points, err := acv.readFromBlock(buf, points, ts, ts+60*60*60)
+		points, _, err := acv.readFromBlock(buf, points, ts, ts+60*60*60)
 		if err != nil {
 			t.Error(err)
 		}
@@ -241,7 +242,7 @@ func TestBlockReadWrite2(t *testing.T) {
 		var size int
 		{
 			// written, left :=
-			written, _ := acv.appendPointsToBlock(buf, input[:1]...)
+			written, _, _ := acv.appendPointsToBlock(buf, input[:1]...)
 			log.Printf("acv.cblock.lastByteOffset = %+v\n", acv.cblock.lastByteOffset)
 
 			size += written
@@ -249,7 +250,7 @@ func TestBlockReadWrite2(t *testing.T) {
 		}
 		{
 			// written, left :=
-			written, _ := acv.appendPointsToBlock(buf[size-1:], input[1:5]...)
+			written, _, _ := acv.appendPointsToBlock(buf[size-1:], input[1:5]...)
 			log.Printf("acv.cblock.lastByteOffset = %+v\n", acv.cblock.lastByteOffset)
 			log.Printf("buf = %08b\n", buf[:30])
 
@@ -257,7 +258,7 @@ func TestBlockReadWrite2(t *testing.T) {
 		}
 		{
 			// written, left :=
-			written, _ := acv.appendPointsToBlock(buf[size-1:], input[5:]...)
+			written, _, _ := acv.appendPointsToBlock(buf[size-1:], input[5:]...)
 			log.Printf("acv.cblock.lastByteOffset = %+v\n", acv.cblock.lastByteOffset)
 			log.Printf("buf = %08b\n", buf[:30])
 
@@ -284,7 +285,7 @@ func TestBlockReadWrite2(t *testing.T) {
 
 		debugCompress = true
 
-		points, err := acv.readFromBlock(buf, points, ts, ts+30)
+		points, _, err := acv.readFromBlock(buf, points, ts, ts+30)
 		if err != nil {
 			t.Error(err)
 		}
@@ -486,24 +487,26 @@ func TestCompressedWhisperReadWrite2(t *testing.T) {
 	// log.Printf("dst = %+v\n", dst)
 }
 
-var compressed = flag.Bool("compressed", false, "compressd")
-
 func TestCompressedWhisperReadWrite3(t *testing.T) {
-	// debug = true
-	// flag.Parse()
-
-	// rets, err := ParseRetentionDefs("1s:2d,1m:28d,1h:2y")
-	// if err != nil {
-	// 	t.Fatal(err)
-	// }
-	// pretty.Println(rets)
-
 	fpath := "test3.wsp"
-	if *compressed {
-		fpath += ".cwsp"
-	}
 	os.Remove(fpath)
-	whisper, err := CreateWithOptions(
+	os.Remove(fpath + ".cwsp")
+
+	cwhisper, err := CreateWithOptions(
+		fpath+".cwsp",
+		[]*Retention{
+			{secondsPerPoint: 1, numberOfPoints: 172800},   // 1s:2d
+			{secondsPerPoint: 60, numberOfPoints: 40320},   // 1m:28d
+			{secondsPerPoint: 3600, numberOfPoints: 17520}, // 1h:2y
+		},
+		Sum,
+		0,
+		&Options{Compressed: true, PointsPerBlock: 7200},
+	)
+	if err != nil {
+		panic(err)
+	}
+	ncwhisper, err := CreateWithOptions(
 		fpath,
 		[]*Retention{
 			{secondsPerPoint: 1, numberOfPoints: 172800},   // 1s:2d
@@ -512,7 +515,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 		},
 		Sum,
 		0,
-		&Options{Compressed: *compressed, PointsPerBlock: 7200},
+		&Options{Compressed: false, PointsPerBlock: 7200},
 	)
 	if err != nil {
 		panic(err)
@@ -522,152 +525,113 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 		return time.Unix(1544478230, 0)
 	}
 
-	// ts := int(Now().Unix())
-	// input := []*TimeSeriesPoint{}
-	//
-	// 1544478230 - 28 * 24 * 3600 = 1542059030
-	//
-	// 1542059030
-	// 1542060000
-	// 1542062580
-
-	// 1544478230-24 * 365 * 2*60 = 1543427030
-	// 1543427030-1543427030%3600 = 1543424400
-	// 1517410800
-
-	// 1481403600 - 1544472000
-	//
-	// 1481147030
-	// 1481403600 - 1544472000
-	// 		1544295600
-
 	{
-		start := Now().Add(time.Hour * -24 * 365 * 2)
-		end := start.Add(time.Duration(17519) * time.Hour).Unix()
-		log.Printf("start = %+v\n", start.Unix())
-		log.Printf("end = %+v\n", end)
-		for i := 0; i < 17520; i++ {
-			ps := []*TimeSeriesPoint{{
-				Time: int(start.Add(time.Duration(i) * time.Hour).Unix()),
-				// Value: float64(i),
-				// Value: rand.NormFloat64(),
-				Value: float64(rand.Intn(100)),
-			}}
-			// log.Printf("ps[0] = %+v\n", *ps[0])
-			if err := whisper.UpdateMany(ps); err != nil {
-				t.Error(err)
-			}
-		}
-	}
+		start := Now().Add(time.Hour * -24 * 10)
+		// for i := 0; i < 172800; {
+		var ps []*TimeSeriesPoint
+		for i := 0; i < 10*24*60*60; {
+			// ps := []*TimeSeriesPoint{{
+			// 	Time:  int(start.Add(time.Duration(i) * time.Second).Unix()),
+			// 	Value: float64(i),
+			// 	// Value: 2000.0 + float64(rand.Intn(100000))/100.0,
+			// 	// Value: rand.NormFloat64(),
+			// 	// Value: float64(rand.Intn(100000)),
+			// }}
 
-	{
-		start := Now().Add(time.Hour * -24 * 28)
-		log.Printf("start = %+v\n", start.Unix())
-		log.Printf("end   = %+v\n", int(start.Add(time.Duration(40319)*time.Minute).Unix()))
-		for i := 0; i < 40320; i++ {
-			if err := whisper.UpdateMany([]*TimeSeriesPoint{{
-				Time: int(start.Add(time.Duration(i) * time.Minute).Unix()),
-				// Value: float64(i),
-				// Value: rand.NormFloat64(),
-				Value: float64(rand.Intn(100)),
-			}}); err != nil {
-				t.Error(err)
-			}
-		}
-	}
+			// if err := cwhisper.UpdateMany(ps); err != nil {
+			// 	t.Error(err)
+			// }
+			// if err := ncwhisper.UpdateMany(ps); err != nil {
+			// 	t.Error(err)
+			// }
 
-	{
-		// 1544478230 - 24 * 2 * 60 * 60 * 60 = 1534110230
-		// 1544478179 - 1544305430 = 172749
-		start := Now().Add(time.Hour * -24 * 2)
-		for i := 0; i < 172800; {
-			ps := []*TimeSeriesPoint{{
+			ps = append(ps, &TimeSeriesPoint{
 				Time:  int(start.Add(time.Duration(i) * time.Second).Unix()),
 				Value: float64(i),
 				// Value: 2000.0 + float64(rand.Intn(100000))/100.0,
 				// Value: rand.NormFloat64(),
 				// Value: float64(rand.Intn(100000)),
-			}}
-			// if ps[0].Time%60 == 0 {
-			// }
-			// log.Printf("ps[0] = %+v\n", *ps[0])
-			if err := whisper.UpdateMany(ps); err != nil {
-				t.Error(err)
-			}
-
-			// i += rand.Intn(1)
+			})
 			i += 1
+
+			if len(ps) >= 300 {
+				if err := cwhisper.UpdateMany(ps); err != nil {
+					t.Error(err)
+				}
+				if err := ncwhisper.UpdateMany(ps); err != nil {
+					t.Error(err)
+				}
+				ps = ps[:0]
+			}
 		}
 	}
-	whisper.Close()
 
-	pretty.Println(whisper)
-	for _, ar := range whisper.archives {
-		ar.dumpInfo()
-	}
-	// pretty.Printf("whisper.archives[0].blockRanges = %# v\n", whisper.archives[0].blockRanges)
-	// pretty.Printf("whisper.archives[1].blockRanges = %# v\n", whisper.archives[1].blockRanges)
-	// pretty.Printf("whisper.archives[2].blockRanges = %# v\n", whisper.archives[2].blockRanges)
+	// {
+	// 	start := Now().Add(time.Hour * -24 * 28)
+	// 	log.Printf("start = %+v\n", start.Unix())
+	// 	log.Printf("end   = %+v\n", int(start.Add(time.Duration(40319)*time.Minute).Unix()))
+	// 	for i := 0; i < 40320; i++ {
+	// 		ps := []*TimeSeriesPoint{{
+	// 			Time: int(start.Add(time.Duration(i) * time.Minute).Unix()),
+	// 			// Value: float64(i),
+	// 			// Value: rand.NormFloat64(),
+	// 			Value: float64(rand.Intn(100)),
+	// 		}}
+	// 		if err := cwhisper.UpdateMany(ps); err != nil {
+	// 			t.Error(err)
+	// 		}
+	// 		if err := ncwhisper.UpdateMany(ps); err != nil {
+	// 			t.Error(err)
+	// 		}
+	// 	}
+	// }
 
-	whisper, err = OpenWithOptions(fpath, &Options{Compressed: true, PointsPerBlock: 7200})
+	// {
+	// 	start := Now().Add(time.Hour * -24 * 365 * 2)
+	// 	end := start.Add(time.Duration(17519) * time.Hour).Unix()
+	// 	log.Printf("start = %+v\n", start.Unix())
+	// 	log.Printf("end = %+v\n", end)
+	// 	for i := 0; i < 17520; i++ {
+	// 		ps := []*TimeSeriesPoint{{
+	// 			Time: int(start.Add(time.Duration(i) * time.Hour).Unix()),
+	// 			// Value: float64(i),
+	// 			// Value: rand.NormFloat64(),
+	// 			Value: float64(rand.Intn(100)),
+	// 		}}
+	// 		// log.Printf("ps[0] = %+v\n", *ps[0])
+	// 		if err := cwhisper.UpdateMany(ps); err != nil {
+	// 			t.Error(err)
+	// 		}
+	// 		if err := ncwhisper.UpdateMany(ps); err != nil {
+	// 			t.Error(err)
+	// 		}
+	// 	}
+	// }
+
+	cwhisper.Close()
+	ncwhisper.Close()
+
+	fmt.Println("go", "run", "bin/verify.go", fpath, fpath+".cwsp")
+	output, err := exec.Command("go", "run", "bin/verify.go", fpath, fpath+".cwsp").CombinedOutput()
+	fmt.Fprint(os.Stdout, string(output))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// .archives[2].blockRanges
+	// cwhisper, err = OpenWithOptions(fpath, &Options{Compressed: true, PointsPerBlock: 7200})
+	// if err != nil {
+	// 	t.Fatal(err)
+	// }
 
-	// pretty.Println(whisper)
+	// log.Printf("whisper.archives[1].blockRanges = %+v\n", whisper.archives[1].blockRanges)
+	// log.Println("start:", int(time.Unix(1544478230, 0).Add(time.Hour*-24*28).Unix()))
+	// log.Println("end:  ", 1544478230)
 
-	log.Printf("whisper.archives[1].blockRanges = %+v\n", whisper.archives[1].blockRanges)
-	log.Println("start:", int(time.Unix(1544478230, 0).Add(time.Hour*-24*28).Unix()))
-	log.Println("end:  ", 1544478230)
-
-	buf := make([]byte, whisper.archives[2].blockSize)
-	n, err := whisper.file.ReadAt(buf, int64(whisper.archives[1].blockOffset(1)))
-	log.Printf("n = %+v\n", n)
-	if err != nil {
-		panic(err)
-	}
-
-	// log.Printf("buf = %0x\n", buf)
-
-	// var dst []dataPoint
-	// // start := Now().Add(time.Hour * -24 * 365 * 2)
-	// // dst, err = whisper.archives[1].readFromBlock(buf, dst, int(start.Add(17520*time.Hour).Unix()), 1544478230+3600)
-	// // dst, err = whisper.archives[1].readFromBlock(buf, dst, 1517407200, 1544478230+3600)
-
-	// // for i := 0; i < 64; i += 8 {
-	// // 	fmt.Printf("%08b\n", buf[i:i+8])
-	// // }
-
-	// // debug = true
-	// dst, err = whisper.archives[1].readFromBlock(
-	// 	buf, dst,
-	// 	int(time.Unix(1544478230, 0).Add(time.Hour*-24*28).Unix()),
-	// 	1544478230,
-	// )
+	// buf := make([]byte, whisper.archives[2].blockSize)
+	// n, err := whisper.file.ReadAt(buf, int64(whisper.archives[1].blockOffset(1)))
+	// log.Printf("n = %+v\n", n)
 	// if err != nil {
 	// 	panic(err)
-	// }
-	// log.Printf("len(dst) = %+v\n", len(dst))
-	// log.Printf("dst[:10] = %+v\n", dst[:10])
-	// log.Printf("dst[len-10:] = %+v\n", dst[len(dst)-10:])
-
-	// pretty.Println(whisper)
-
-	// log.Printf("ts = %+v\n", ts-30)
-	// log.Printf("ts+30 = %+v\n", ts)
-	// if ts, err := whisper.Fetch(1544478230-310, 1544478230-290); err != nil {
-	// 	t.Error(err)
-	// } else {
-	// 	pretty.Println(ts)
-	// }
-	// {
-	// 	if ts, err := whisper.Fetch(1544478230-30, 1544478230); err != nil {
-	// 		t.Error(err)
-	// 	} else {
-	// 		pretty.Println(ts)
-	// 	}
 	// }
 }
 
