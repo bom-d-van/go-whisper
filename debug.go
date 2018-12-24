@@ -128,6 +128,17 @@ func (archive *archiveInfo) dumpInfo() {
 	fmt.Printf("  last_byte_offset:  %d\n", archive.cblock.lastByteOffset)
 	fmt.Printf("  last_byte_bit_pos: %d\n", archive.cblock.lastByteBitPos)
 	fmt.Printf("  crc32:             %08x\n", archive.cblock.crc32)
+	fmt.Printf("  stats:\n")
+	// fmt.Printf("     interval.len1:    %d\n", archive.stats.interval.len1)
+	// fmt.Printf("     interval.len9:    %d\n", archive.stats.interval.len9)
+	// fmt.Printf("     interval.len12:   %d\n", archive.stats.interval.len12)
+	// fmt.Printf("     interval.len16:   %d\n", archive.stats.interval.len16)
+	// fmt.Printf("     interval.len36:   %d\n", archive.stats.interval.len36)
+	// fmt.Printf("     value.same:       %d\n", archive.stats.value.same)
+	// fmt.Printf("     value.sameLen:    %d\n", archive.stats.value.sameLen)
+	// fmt.Printf("     value.variedLen:  %d\n", archive.stats.value.variedLen)
+	fmt.Printf("     extend.block:     %d\n", archive.stats.extend.block)
+	fmt.Printf("     extend.pointSize: %d\n", archive.stats.extend.pointSize)
 
 	// archive.sortBlockRanges()
 

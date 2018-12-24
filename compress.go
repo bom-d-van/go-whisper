@@ -77,19 +77,11 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		a.cblock.lastByteOffset += bw.index
 		written = bw.index + 1
 
-		if bw.index >= 5 {
-			log.Printf("a.cblock.lastByteOffset = %+v\n", a.cblock.lastByteOffset)
-			log.Printf("%d.%d.bw.buf[bw.index-5:bw.index] = %08b\n", a.secondsPerPoint, a.cblock.index, bw.buf[bw.index:bw.index+5])
-		}
-
 		// write end-of-block marker if there is enough space
 		bw.WriteUint(4, 0x0f)
 		bw.WriteUint(32, 0)
 
-		if bw.index >= 5 {
-			log.Printf("%d.%d.bw.buf[bw.index-5:bw.index] = %08b\n", a.secondsPerPoint, a.cblock.index, bw.buf[bw.index-5:bw.index])
-		}
-
+		// exclude last byte from crc32 unless block is full
 		if rotate {
 			a.cblock.crc32 = crc32(buf[:written], a.cblock.crc32)
 		} else if written-1 > 0 {

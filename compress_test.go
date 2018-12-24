@@ -691,15 +691,11 @@ func TestCompressedWhisperReadWrite4(t *testing.T) {
 		// break
 	}
 
+	for _, arc := range cdst.archives {
+		log.Printf("arc.stats = %+v\n", arc.stats)
+	}
 	if err := cdst.writeHeaderCompressed(); err != nil {
 		t.Fatal(err)
 	}
 	cdst.Close()
-
-	// cdst.Dump(false)
-
-	// pretty.Println(cdst)
-	// for _, archive := range cdst.archives {
-	// 	archive.dumpInfo()
-	// }
 }
