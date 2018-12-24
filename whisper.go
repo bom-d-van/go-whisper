@@ -7,7 +7,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"os"
 	"regexp"
@@ -648,8 +647,6 @@ func (whisper *Whisper) crc32Offset() int {
 func (whisper *Whisper) writeHeaderCompressed() (err error) {
 	b := make([]byte, whisper.MetadataSize())
 	i := 0
-
-	log.Printf("whisper.file.Name() = %+v\n", whisper.file.Name())
 
 	// magic string
 	i += len(compressedMagicString)
@@ -1999,9 +1996,10 @@ func mod(a, b int) int {
 	return a - (b * int(math.Floor(float64(a)/float64(b))))
 }
 
-const polynomial uint32 = 0xEDB88320
-
+// from https://create.stephan-brumme.com/crc32/
 func crc32(data []byte, prev uint32) uint32 {
+	const polynomial uint32 = 0xEDB88320
+
 	crc := prev ^ 0xFFFFFFFF
 	for _, b := range data {
 		crc ^= uint32(b)
