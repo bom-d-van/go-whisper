@@ -405,10 +405,6 @@ func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int)
 	var debugindex int
 	var exitByEOB bool
 
-	// if a.secondsPerPoint == 60 {
-	// 	log.Printf("buf[:10] = %X\n", buf[:10])
-	// }
-
 readloop:
 	for {
 		if br.current >= len(br.buf) {

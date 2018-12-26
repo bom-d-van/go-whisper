@@ -658,8 +658,6 @@ func TestCompressedWhisperReadWrite4(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cdst.noPropagation = true
-
 	for i := len(src.archives) - 1; i >= 0; i-- {
 		archive := src.archives[i]
 
@@ -681,14 +679,9 @@ func TestCompressedWhisperReadWrite4(t *testing.T) {
 		}
 		points = points[:index]
 
-		// log.Printf("archive.secondsPerPoint = %+v\n", archive.secondsPerPoint)
-		// log.Printf("points[:10] = %+v\n", points[:10])
-
 		if err := cdst.archives[i].appendToBlockAndRotate(points); err != nil {
 			t.Fatal(err)
 		}
-		// log.Printf("cdst.avgCompressedPointSize = %+v\n", cdst.avgCompressedPointSize)
-		// break
 	}
 
 	if err := cdst.writeHeaderCompressed(); err != nil {

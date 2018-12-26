@@ -10,9 +10,11 @@ import (
 	"math"
 	"os"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -165,8 +167,6 @@ type Whisper struct {
 	avgCompressedPointSize float32
 
 	crc32 uint32
-
-	noPropagation bool
 }
 
 // Wrappers for whisper.file operations
@@ -409,7 +409,11 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 		return nil, fmt.Errorf("Unable to reset file offset: %s", err)
 	}
 
-	offset := 0
+	if !whisper.compressed && options.Compressed {
+		if err := whisper.convertToCompressed(); err != nil {
+			fmt.Printf("Fail to convert file to compressed format: %s", err)
+		}
+	}
 
 	// read the metadata
 	if whisper.compressed {
@@ -418,6 +422,7 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 
 	b = make([]byte, MetadataSize)
 	readed, err := file.Read(b)
+	offset := 0
 
 	if err != nil {
 		err = fmt.Errorf("Unable to read header: %s", err.Error())
@@ -872,7 +877,6 @@ var Now = func() time.Time { return time.Now() }
 
 func (whisper *Whisper) UpdateMany(points []*TimeSeriesPoint) (err error) {
 	// recover panics and return as error
-
 	defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("%s", e)
@@ -982,8 +986,8 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 	}
 
 	var baseInterval int
-	if dps := unpackDataPointsStrict(archive.buffer); len(dps) > 0 {
-		baseInterval = archive.next.Interval(dps[0].interval)
+	if dp := getFirstDataPointStrict(archive.buffer); dp.interval > 0 {
+		baseInterval = archive.next.Interval(dp.interval)
 	}
 
 	bufferPointsCount := archive.next.secondsPerPoint / archive.secondsPerPoint
@@ -1029,7 +1033,7 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 		}
 
 		// propagate
-		if lower := whisper.getNextArchive(archive); !whisper.noPropagation && lower != nil {
+		if lower := whisper.getNextArchive(archive); lower != nil {
 			// TODO: floor or ceil
 			lowerIntervalStart := dps[0].interval - mod(dps[0].interval, lower.secondsPerPoint)
 
@@ -1067,8 +1071,6 @@ func (whisper *Whisper) getNextArchive(higher *archiveInfo) *archiveInfo {
 func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 	whisper := archive.whisper // TODO: optimize away?
 
-	// TODO: optimize?
-	// blockBuffer := make([]byte, archive.blockSize)
 	blockBuffer := make([]byte, len(dps)*PointSize+endOfBlockSize)
 
 	for {
@@ -1080,24 +1082,9 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 			end = len(blockBuffer) - 1
 		}
 
-		// if archive.secondsPerPoint == 60 {
-		// 	log.Printf("len(left) = %+v\n", len(left))
-		// 	log.Printf("size = %+v\n", size)
-		// 	log.Printf("blockBuffer[:10] = %X\n", blockBuffer[:10])
-		// 	log.Printf("archive.cblock.lastByteOffset = %+v\n", archive.cblock.lastByteOffset)
-		// }
-
 		if err := whisper.fileWriteAt(blockBuffer[:end], int64(archive.cblock.lastByteOffset-size+1)); err != nil {
 			return err
 		}
-
-		// b := make([]byte, 200)
-		// if _, err := whisper.file.ReadAt(b, int64(archive.blockOffset(archive.cblock.index))); err != nil {
-		// 	return err
-		// }
-		// if archive.secondsPerPoint == 60 {
-		// 	log.Printf("b[:10] = %X\n", b[:10])
-		// }
 
 		for i := 0; i < len(blockBuffer); i++ {
 			blockBuffer[i] = 0
@@ -1174,13 +1161,6 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		archive.cblock = nblock
 		archive.blockRanges[nblock.index].start = 0
 		archive.blockRanges[nblock.index].end = 0
-		// for i, b := range archive.blockRanges {
-		// 	if b.index == nblock.index {
-		// 		archive.blockRanges[i].start = 0
-		// 		archive.blockRanges[i].end = 0
-		// 		break
-		// 	}
-		// }
 	}
 
 	return nil
@@ -1752,6 +1732,10 @@ type archiveInfo struct {
 		extend struct {
 			block, pointSize uint32 `meta:"size:4"`
 		}
+
+		discard struct {
+			badInterval uint32 `meta:"size:4"`
+		}
 	}
 }
 
@@ -1779,12 +1763,11 @@ func (a *archiveInfo) blockOffset(blockIndex int) int {
 	return a.offset + blockIndex*a.blockSize
 }
 
-// TODO: still wrong? test with data/www/shared_property/wallclock/ko_sum.wsp.cwsp
 func (archive *archiveInfo) getSortedBlockRanges() []blockRange {
 	brs := make([]blockRange, len(archive.blockRanges))
 	copy(brs, archive.blockRanges)
 
-	sort.Slice(brs, func(i, j int) bool {
+	sort.SliceStable(brs, func(i, j int) bool {
 		istart := brs[i].start
 		if brs[i].start == 0 {
 			istart = math.MaxInt64
@@ -1793,10 +1776,6 @@ func (archive *archiveInfo) getSortedBlockRanges() []blockRange {
 		if brs[j].start == 0 {
 			jstart = math.MaxInt64
 		}
-
-		// if istart == math.MaxInt64 && jstart == math.MaxInt64 {
-		// 	return i < j
-		// }
 
 		return istart < jstart
 	})
@@ -1986,6 +1965,85 @@ func unpackDataPointsStrict(b []byte) (series []dataPoint) {
 		series = append(series, dp)
 	}
 	return
+}
+
+func getFirstDataPointStrict(b []byte) dataPoint {
+	series = make([]dataPoint, 0, len(b)/PointSize)
+	for i := 0; i < len(b); i += PointSize {
+		dp := unpackDataPoint(b[i : i+PointSize])
+		if dp.interval == 0 {
+			continue
+		}
+		return dp
+	}
+	return dataPoint{}
+}
+
+var autoConvertCount int64
+var MaxAutoConvertCount = runtime.NumCPU()
+
+func (whisper *Whisper) convertToCompressed() error {
+	// a simple strategy of throttling auto-converstion to compressed format
+	defer atomic.AddInt64(&autoConvertCount, -1)
+	if atomic.AddInt64(&autoConvertCount, 1) >= MaxAutoConvertCount {
+		return nil
+	}
+
+	src := whisper
+
+	var rets []*Retention
+	for _, arc := range src.archives {
+		rets = append(rets, &Retention{secondsPerPoint: arc.secondsPerPoint, numberOfPoints: arc.numberOfPoints})
+	}
+
+	os.Remove(whisper.file.Name() + ".cwsp")
+	dst, err := CreateWithOptions(
+		whisper.file.Name()+".cwsp", rets,
+		src.aggregationMethod, src.xFilesFactor,
+		&Options{Compressed: true, PointsPerBlock: 7200},
+	)
+	if err != nil {
+		return err
+	}
+
+	for i := len(src.archives) - 1; i >= 0; i-- {
+		archive := src.archives[i]
+
+		b := make([]byte, archive.Size())
+		err := src.fileReadAt(b, archive.Offset())
+		if err != nil {
+			return err
+		}
+		points := unpackDataPoints(b)
+		sort.Slice(points, func(i, j int) bool {
+			return points[i].interval < points[j].interval
+		})
+		var index int
+		for i := 0; i < len(points); i++ {
+			if points[i].interval > 0 {
+				points[index] = points[i]
+				index++
+			}
+		}
+		points = points[:index]
+
+		if err := dst.archives[i].appendToBlockAndRotate(points); err != nil {
+			return err
+		}
+	}
+
+	if err := dst.writeHeaderCompressed(); err != nil {
+		return err
+	}
+	if err := dst.file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(dst.file.Name(), whisper.file.Name()); err != nil {
+		return err
+	}
+
+	*whisper.compressed = true
+	return nil
 }
 
 /*
