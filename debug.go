@@ -139,6 +139,7 @@ func (archive *archiveInfo) dumpInfo() {
 	// fmt.Printf("     value.variedLen:  %d\n", archive.stats.value.variedLen)
 	fmt.Printf("     extend.block:     %d\n", archive.stats.extend.block)
 	fmt.Printf("     extend.pointSize: %d\n", archive.stats.extend.pointSize)
+	fmt.Printf("     discard.oldInterval: %d\n", archive.stats.discard.oldInterval)
 
 	// archive.sortBlockRanges()
 

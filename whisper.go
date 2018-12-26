@@ -32,7 +32,7 @@ const (
 
 	VersionSize = 1
 
-	CompressedArchiveInfoSize     = 80 + 8 + FreeCompressedArchiveInfoSize
+	CompressedArchiveInfoSize     = 80 + 12 + FreeCompressedArchiveInfoSize
 	FreeCompressedArchiveInfoSize = 32
 
 	avgCompressedPointSize = 2
@@ -582,6 +582,8 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 		offset += IntSize
 		arc.stats.extend.pointSize = uint32(unpackInt(b[offset : offset+IntSize]))
 		offset += IntSize
+		arc.stats.discard.oldInterval = uint32(unpackInt(b[offset : offset+IntSize]))
+		offset += IntSize
 
 		whisper.archives[i] = &arc
 	}
@@ -692,6 +694,7 @@ func (whisper *Whisper) writeHeaderCompressed() (err error) {
 
 		i += packInt(b, int(archive.stats.extend.block), i)
 		i += packInt(b, int(archive.stats.extend.pointSize), i)
+		i += packInt(b, int(archive.stats.discard.oldInterval), i)
 
 		i += FreeCompressedArchiveInfoSize
 	}
@@ -994,9 +997,13 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 	for aindex := 0; aindex < len(alignedPoints); {
 		dp := alignedPoints[aindex]
 
-		// TODO: move away?
 		if baseInterval == 0 {
 			baseInterval = archive.next.Interval(dp.interval)
+		}
+
+		if dp.interval < baseInterval-archive.next.secondsPerPoint {
+			archive.stats.discard.oldInterval++
+			continue
 		}
 
 		offset := bufferPointsCount - (baseInterval-dp.interval)/archive.secondsPerPoint
@@ -1734,7 +1741,7 @@ type archiveInfo struct {
 		}
 
 		discard struct {
-			badInterval uint32 `meta:"size:4"`
+			oldInterval uint32 `meta:"size:4"`
 		}
 	}
 }
@@ -1968,7 +1975,6 @@ func unpackDataPointsStrict(b []byte) (series []dataPoint) {
 }
 
 func getFirstDataPointStrict(b []byte) dataPoint {
-	series = make([]dataPoint, 0, len(b)/PointSize)
 	for i := 0; i < len(b); i += PointSize {
 		dp := unpackDataPoint(b[i : i+PointSize])
 		if dp.interval == 0 {
@@ -1980,7 +1986,7 @@ func getFirstDataPointStrict(b []byte) dataPoint {
 }
 
 var autoConvertCount int64
-var MaxAutoConvertCount = runtime.NumCPU()
+var MaxAutoConvertCount = int64(runtime.NumCPU())
 
 func (whisper *Whisper) convertToCompressed() error {
 	// a simple strategy of throttling auto-converstion to compressed format
@@ -2042,7 +2048,7 @@ func (whisper *Whisper) convertToCompressed() error {
 		return err
 	}
 
-	*whisper.compressed = true
+	whisper.compressed = true
 	return nil
 }
 
