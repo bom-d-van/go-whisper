@@ -1001,6 +1001,8 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 			baseInterval = archive.next.Interval(dp.interval)
 		}
 
+		// current implementation expects data points to monotonically
+		// increasing in time
 		if dp.interval < baseInterval-archive.next.secondsPerPoint {
 			archive.stats.discard.oldInterval++
 			continue
@@ -1030,7 +1032,6 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 			archive.buffer[i] = 0
 		}
 
-		// buffer empty
 		if len(dps) <= 0 {
 			continue
 		}
