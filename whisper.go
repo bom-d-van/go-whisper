@@ -480,7 +480,7 @@ func (whisper *Whisper) initMetaInfo() {
 
 		prevArc := whisper.archives[i-1]
 		prevArc.next = arc
-		prevArc.bufferSize = arc.secondsPerPoint / prevArc.secondsPerPoint * PointSize
+		prevArc.bufferSize = arc.secondsPerPoint / prevArc.secondsPerPoint * PointSize * 2
 	}
 }
 
@@ -773,7 +773,7 @@ func (whisper *Whisper) bufferSize() int {
 	}
 	var bufSize int
 	for i, arc := range whisper.archives[1:] {
-		bufSize += arc.secondsPerPoint / whisper.archives[i].secondsPerPoint * 12
+		bufSize += arc.secondsPerPoint / whisper.archives[i].secondsPerPoint * PointSize * 2
 	}
 	return bufSize
 }
