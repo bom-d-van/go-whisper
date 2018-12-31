@@ -487,6 +487,8 @@ func TestCompressedWhisperReadWrite2(t *testing.T) {
 	// log.Printf("dst = %+v\n", dst)
 }
 
+var batch = flag.Bool("batch", false, "batch mode for TestCompressedWhisperReadWrite3")
+
 func TestCompressedWhisperReadWrite3(t *testing.T) {
 	fpath := "test3.wsp"
 	os.Remove(fpath)
@@ -529,39 +531,41 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 		start := Now().Add(time.Hour * -24 * 10)
 		// for i := 0; i < 172800; {
 		var ps []*TimeSeriesPoint
-		for i := 0; i < 10*24*60*60; {
-			// ps := []*TimeSeriesPoint{{
-			// 	Time:  int(start.Add(time.Duration(i) * time.Second).Unix()),
-			// 	Value: float64(i),
-			// 	// Value: 2000.0 + float64(rand.Intn(100000))/100.0,
-			// 	// Value: rand.NormFloat64(),
-			// 	// Value: float64(rand.Intn(100000)),
-			// }}
+		for i := 0; i < 10*24*60*60; i++ {
+			if *batch {
+				ps = append(ps, &TimeSeriesPoint{
+					Time:  int(start.Add(time.Duration(i) * time.Second).Unix()),
+					Value: float64(i),
+					// Value: 2000.0 + float64(rand.Intn(100000))/100.0,
+					// Value: rand.NormFloat64(),
+					// Value: float64(rand.Intn(100000)),
+				})
 
-			// if err := cwhisper.UpdateMany(ps); err != nil {
-			// 	t.Error(err)
-			// }
-			// if err := ncwhisper.UpdateMany(ps); err != nil {
-			// 	t.Error(err)
-			// }
+				if len(ps) >= 300 {
+					if err := cwhisper.UpdateMany(ps); err != nil {
+						t.Error(err)
+					}
+					if err := ncwhisper.UpdateMany(ps); err != nil {
+						t.Error(err)
+					}
+					ps = ps[:0]
+				}
 
-			ps = append(ps, &TimeSeriesPoint{
-				Time:  int(start.Add(time.Duration(i) * time.Second).Unix()),
-				Value: float64(i),
-				// Value: 2000.0 + float64(rand.Intn(100000))/100.0,
-				// Value: rand.NormFloat64(),
-				// Value: float64(rand.Intn(100000)),
-			})
-			i += 1
+			} else {
+				ps := []*TimeSeriesPoint{{
+					Time:  int(start.Add(time.Duration(i) * time.Second).Unix()),
+					Value: float64(i),
+					// Value: 2000.0 + float64(rand.Intn(100000))/100.0,
+					// Value: rand.NormFloat64(),
+					// Value: float64(rand.Intn(100000)),
+				}}
 
-			if len(ps) >= 300 {
 				if err := cwhisper.UpdateMany(ps); err != nil {
 					t.Error(err)
 				}
 				if err := ncwhisper.UpdateMany(ps); err != nil {
 					t.Error(err)
 				}
-				ps = ps[:0]
 			}
 		}
 	}
@@ -684,7 +688,7 @@ func TestCompressedWhisperReadWrite4(t *testing.T) {
 		}
 	}
 
-	if err := cdst.writeHeaderCompressed(); err != nil {
+	if err := cdst.WriteHeaderCompressed(); err != nil {
 		t.Fatal(err)
 	}
 	cdst.Close()
