@@ -528,7 +528,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 	}
 
 	{
-		start := Now().Add(time.Hour * -24 * 2)
+		start := Now().Add(time.Hour * -24 * 10)
 		// for i := 0; i < 172800; {
 		var ps []*TimeSeriesPoint
 		for i := 0; i < 10*24*60*60; i++ {
