@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/kr/pretty"
 )
 
@@ -692,4 +693,44 @@ func TestCompressedWhisperReadWrite4(t *testing.T) {
 		t.Fatal(err)
 	}
 	cdst.Close()
+}
+
+func TestCompressedWhisperInplaceConvert(t *testing.T) {
+	data := []*TimeSeriesPoint{{Time: int(time.Now().Add(-time.Minute).Unix()), Value: 1024.4096}}
+	from, until := int(time.Now().Add(-time.Hour).Unix()), int(time.Now().Unix())
+
+	cwsp, err := OpenWithOptions(*whisperFile, &Options{Compressed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cwsp.UpdateMany(data); err != nil {
+		t.Fatal(err)
+	}
+	nps, err := cwsp.Fetch(from, until)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wsp, err := OpenWithOptions(*whisperFile+".original", &Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wsp.UpdateMany(data); err != nil {
+		t.Fatal(err)
+	}
+	ops, err := wsp.Fetch(from, until)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pretty.Println(nps)
+	pretty.Println(ops)
+
+	if diff := cmp.Diff(nps, ops, cmp.AllowUnexported(TimeSeries{}), cmpopts.EquateNaNs()); diff != "" {
+		fmt.Println(diff)
+		// fmt.Printf("error: does not match for %s\n", file1)
+	}
+
+	cwsp.Close()
+	wsp.Close()
 }

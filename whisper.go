@@ -39,6 +39,8 @@ const (
 	avgCompressedPointSize = 2
 	BlockRangeSize         = 16
 	endOfBlockSize         = 5
+
+	DefaultPointsPerBlock = 7200
 )
 
 const (
@@ -168,6 +170,8 @@ type Whisper struct {
 	avgCompressedPointSize float32
 
 	crc32 uint32
+
+	opts *Options
 }
 
 // Wrappers for whisper.file operations
@@ -221,6 +225,9 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 	}
 	if options.PointSize == 0 {
 		options.PointSize = avgCompressedPointSize
+	}
+	if options.PointsPerBlock == 0 {
+		options.PointsPerBlock = DefaultPointsPerBlock
 	}
 
 	whisper = new(Whisper)
@@ -393,21 +400,15 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 
 	whisper = new(Whisper)
 	whisper.file = file
+	whisper.opts = options
 
 	b := make([]byte, len(compressedMagicString))
-
 	if _, err := whisper.file.Read(b); err != nil {
 		return nil, fmt.Errorf("Unable to read magic string: %s", err)
 	} else if string(b) == string(compressedMagicString) {
 		whisper.compressed = true
 	} else if _, err := whisper.file.Seek(0, 0); err != nil {
 		return nil, fmt.Errorf("Unable to reset file offset: %s", err)
-	}
-
-	if !whisper.compressed && options.Compressed {
-		if err := whisper.convertToCompressed(); err != nil {
-			fmt.Printf("Fail to convert file to compressed format: %s", err)
-		}
 	}
 
 	// read the metadata
@@ -455,6 +456,14 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 		whisper.archives = append(whisper.archives, unpackArchiveInfo(b))
 	}
 
+	// if !whisper.compressed && options.Compressed {
+	// 	if err := whisper.convertToCompressed(); err != nil {
+	// 		fmt.Printf("Fail to convert file to compressed format: %s", err)
+	// 	} else {
+	// 		return whisper, whisper.readHeaderCompressed()
+	// 	}
+	// }
+
 	return whisper, nil
 }
 
@@ -494,6 +503,10 @@ func (archive *archiveInfo) hasBuffer() bool {
 // ...
 // [archive0 blocksn]
 func (whisper *Whisper) readHeaderCompressed() (err error) {
+	if _, err := whisper.file.Seek(int64(len(compressedMagicString)), 0); err != nil {
+		return err
+	}
+
 	offset := 0
 	hlen := whisper.MetadataSize() - len(compressedMagicString)
 	b := make([]byte, hlen)
@@ -887,6 +900,14 @@ func (whisper *Whisper) UpdateMany(points []*TimeSeriesPoint) (err error) {
 		}
 	}()
 
+	if !whisper.compressed && whisper.opts.Compressed {
+		if err := whisper.convertToCompressed(); err != nil {
+			return fmt.Errorf("Fail to convert file to compressed format: %s", err)
+			// } else {
+			// 	whisper.readHeaderCompressed()
+		}
+	}
+
 	// sort the points, newest first
 	reversePoints(points)
 	sort.Stable(timeSeriesPointsNewestFirst{points})
@@ -1259,7 +1280,7 @@ func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize f
 	nwhisper, err := CreateWithOptions(
 		whisper.file.Name()+".extend", rets,
 		whisper.aggregationMethod, whisper.xFilesFactor,
-		&Options{Compressed: true, PointsPerBlock: 7200, PointSize: newSize},
+		&Options{Compressed: true, PointsPerBlock: DefaultPointsPerBlock, PointSize: newSize},
 	)
 	if err != nil {
 		return fmt.Errorf("extend: %s", err)
@@ -2040,7 +2061,7 @@ func getFirstDataPointStrict(b []byte) dataPoint {
 }
 
 var autoConvertCount int64
-var MaxAutoConvertCount = int64(runtime.NumCPU())
+var MaxAutoConvertCount = int64(runtime.NumCPU() / 2)
 
 func (whisper *Whisper) convertToCompressed() error {
 	// a simple strategy of throttling auto-converstion to compressed format
@@ -2060,7 +2081,8 @@ func (whisper *Whisper) convertToCompressed() error {
 	dst, err := CreateWithOptions(
 		whisper.file.Name()+".cwsp", rets,
 		src.aggregationMethod, src.xFilesFactor,
-		&Options{Compressed: true, PointsPerBlock: 7200},
+		// &Options{Compressed: true, PointsPerBlock: DefaultPointsPerBlock},
+		whisper.opts,
 	)
 	if err != nil {
 		return err
@@ -2102,8 +2124,13 @@ func (whisper *Whisper) convertToCompressed() error {
 		return err
 	}
 
-	whisper.compressed = true
-	return nil
+	whisper.file.Close()
+	os.Symlink(whisper.file.Name(), whisper.file.Name()+".stat")
+
+	nwhisper, err := OpenWithOptions(whisper.file.Name(), whisper.opts)
+	*whisper = *nwhisper
+
+	return err
 }
 
 /*
