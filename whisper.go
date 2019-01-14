@@ -311,17 +311,11 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 			return nil, err
 		}
 	}
-	// whisper.file.Sync()
 
 	return whisper, nil
 }
 
-// func (archive *archiveInfo) blockCount() int {
-// 	return len(archive.blockRanges)
-// }
-
 func (whisper *Whisper) blockCount(archive *archiveInfo) int {
-	// retention.numberOfPoints / whisper.pointsPerBlock
 	return int(math.Ceil(float64(archive.numberOfPoints)/float64(whisper.pointsPerBlock))) + 1
 }
 

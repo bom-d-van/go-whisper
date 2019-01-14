@@ -32,8 +32,8 @@ func TestBitWriter(t *testing.T) {
 
 	// fmt.Printf("-- %08b\n", bw.buf)
 
-	bw.WriteUint(8, 0xaa)
-	bw.WriteUint(12, 0x01aa)
+	bw.Write(8, 0xaa)
+	bw.Write(12, 0x01aa)
 
 	// 1010 01 0000 0000 1010 1010
 	fmt.Printf("-- %08b\n", bw.buf)
@@ -73,11 +73,11 @@ func TestBitsReadWrite(t *testing.T) {
 	// // 1 0000010 1 01100001 0000000 00000000
 
 	// bw.Write(1, 1)
-	// bw.WriteUint(8, 5)
-	// bw.WriteUint(16, 97)
-	// bw.WriteUint(32, 123)
-	// bw.WriteUint(64, math.Float64bits(95.1))
-	// bw.WriteUint(64, 0xfffffffff1ffffff)
+	// bw.Write(8, 5)
+	// bw.Write(16, 97)
+	// bw.Write(32, 123)
+	// bw.Write(64, math.Float64bits(95.1))
+	// bw.Write(64, 0xfffffffff1ffffff)
 
 	// // br.Read(1)
 	// fmt.Printf("br.Read(1) = %v\n", br.Read(1))
@@ -99,7 +99,7 @@ func TestBitsReadWrite(t *testing.T) {
 		{len: 64, val: 0xfffffffff1ffffff},
 	}
 	for _, d := range input {
-		bw.WriteUint(d.len, d.val)
+		bw.Write(d.len, d.val)
 	}
 	for i, d := range input {
 		if got, want := br.Read(d.len), d.val; got != want {
@@ -528,7 +528,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 	}
 
 	{
-		start := Now().Add(time.Hour * -24 * 10)
+		start := Now().Add(time.Hour * -24 * 2)
 		// for i := 0; i < 172800; {
 		var ps []*TimeSeriesPoint
 		for i := 0; i < 10*24*60*60; i++ {
@@ -615,8 +615,8 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 	cwhisper.Close()
 	ncwhisper.Close()
 
-	fmt.Println("go", "run", "bin/verify.go", fpath, fpath+".cwsp")
-	output, err := exec.Command("go", "run", "bin/verify.go", fpath, fpath+".cwsp").CombinedOutput()
+	fmt.Println("go", "run", "bin/forced_verify.go", fpath, fpath+".cwsp")
+	output, err := exec.Command("go", "run", "bin/forced_verify.go", fpath, fpath+".cwsp").CombinedOutput()
 	fmt.Fprint(os.Stdout, string(output))
 	if err != nil {
 		t.Fatal(err)

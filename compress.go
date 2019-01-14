@@ -78,8 +78,8 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		written = bw.index + 1
 
 		// write end-of-block marker if there is enough space
-		bw.WriteUint(4, 0x0f)
-		bw.WriteUint(32, 0)
+		bw.Write(4, 0x0f)
+		bw.Write(32, 0)
 
 		// exclude last byte from crc32 unless block is full
 		if rotate {
@@ -155,7 +155,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 				delta *= -1
 				delta |= 64
 			}
-			bw.WriteUint(7, uint64(delta))
+			bw.Write(7, uint64(delta))
 
 			if debugCompress {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(2, 2, 7, uint64(delta)))
@@ -168,7 +168,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 				delta *= -1
 				delta |= 256
 			}
-			bw.WriteUint(9, uint64(delta))
+			bw.Write(9, uint64(delta))
 
 			if debugCompress {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(3, 6, 9, uint64(delta)))
@@ -181,7 +181,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 				delta *= -1
 				delta |= 2048
 			}
-			bw.WriteUint(12, uint64(delta))
+			bw.Write(12, uint64(delta))
 
 			if debugCompress {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(4, 14, 12, uint64(delta)))
@@ -190,7 +190,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			a.stats.interval.len16++
 		} else {
 			bw.Write(4, 15)
-			bw.WriteUint(32, uint64(p.interval))
+			bw.Write(32, uint64(p.interval))
 
 			if debugCompress {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(4, 15, 32, uint64(delta)))
@@ -227,7 +227,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			if plz <= lz && ptz <= tz {
 				mlen := 64 - plz - ptz // meaningful block size
 				bw.Write(2, 2)
-				bw.WriteUint(mlen, xor>>uint64(ptz))
+				bw.Write(mlen, xor>>uint64(ptz))
 				if debugCompress {
 					// fmt.Printf("mlen = %d %b\n", mlen, xor>>uint64(ptz))
 					fmt.Printf("\tsame-length meaningful block: %0s\n", dumpBits(2, 2, uint64(mlen), xor>>uint(ptz)))
@@ -256,9 +256,9 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 				}
 
 				bw.Write(2, 3)
-				bw.WriteUint(5, uint64(lz))
-				bw.WriteUint(6, uint64(mlen))
-				bw.WriteUint(wmlen, xor)
+				bw.Write(5, uint64(lz))
+				bw.Write(6, uint64(mlen))
+				bw.Write(wmlen, xor)
 				if debugCompress {
 					fmt.Printf("\tvaried-length meaningful block: %0s\n", dumpBits(2, 3, 5, uint64(lz), 6, uint64(mlen), uint64(wmlen), xor))
 				}
@@ -267,9 +267,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 			}
 		}
 
-		// TODO: fix it
 		if bw.isFull() || bw.index+a.cblock.lastByteOffset+endOfBlockSize >= a.blockOffset(a.cblock.index)+a.blockSize {
-			// TODO: optimize
 			rotate = bw.index+a.cblock.lastByteOffset+endOfBlockSize >= a.blockOffset(a.cblock.index)+a.blockSize
 
 			// reset dirty buffer tail
@@ -315,12 +313,20 @@ type BitsWriter struct {
 	bitPos int // 0 indexed
 }
 
+func (bw *BitsWriter) isFull() bool {
+	return bw.index+1 >= len(bw.buf)
+}
+
+func mask(l int) uint {
+	return (1 << uint(l)) - 1
+}
+
 // 7 6 5 4 3 2 1 0
 //
 // 7 6 5 4 3 2 1 0
 //
 // 0 0 0 0 4 3 2 1
-func (bw *BitsWriter) WriteUint(lenb int, data uint64) {
+func (bw *BitsWriter) Write(lenb int, data uint64) {
 	buf := make([]byte, 8)
 	switch {
 	case lenb <= 8:
@@ -332,21 +338,9 @@ func (bw *BitsWriter) WriteUint(lenb int, data uint64) {
 	case lenb <= 64:
 		binary.LittleEndian.PutUint64(buf, data)
 	default:
-		panic(fmt.Sprintf("invalid int size: %d", lenb))
+		panic(fmt.Sprintf("write size = %d > 64", lenb))
 	}
 
-	bw.Write(lenb, buf...)
-}
-
-func (bw *BitsWriter) isFull() bool {
-	return bw.index+1 >= len(bw.buf)
-}
-
-func mask(l int) uint {
-	return (1 << uint(l)) - 1
-}
-
-func (bw *BitsWriter) Write(lenb int, data ...byte) {
 	index := bw.index
 	end := bw.index + 5
 	if debugBitsWrite {
@@ -357,7 +351,7 @@ func (bw *BitsWriter) Write(lenb int, data ...byte) {
 		log.Printf("bw.buf = %08b\n", bw.buf[bw.index:end])
 	}
 
-	for _, b := range data {
+	for _, b := range buf {
 		if lenb <= 0 || bw.isFull() {
 			break
 		}
@@ -693,7 +687,7 @@ func dumpBits(data ...uint64) string {
 	var l uint64
 	for i := 0; i < len(data); i += 2 {
 		// reflect.ValueOf(data[i]).Uint()
-		bw.WriteUint(int(data[i]), data[i+1])
+		bw.Write(int(data[i]), data[i+1])
 		l += data[i]
 	}
 	return fmt.Sprintf("%08b len(%d) bit_pos(%d)", bw.buf[:bw.index+1], l, bw.bitPos)
