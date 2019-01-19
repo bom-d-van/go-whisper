@@ -81,7 +81,7 @@ func (whisper *Whisper) Dump(full bool) {
 		}
 
 		for _, block := range arc.blockRanges {
-			fmt.Printf("archive.%d %s block %d\n", arc.secondsPerPoint, time.Duration(int(time.Second)*arc.secondsPerPoint*arc.numberOfPoints), block.index)
+			fmt.Printf("archive.%d %s block %d @%d\n", arc.secondsPerPoint, time.Duration(int(time.Second)*arc.secondsPerPoint*arc.numberOfPoints), block.index, arc.blockOffset(block.index))
 			if block.start == 0 {
 				fmt.Printf("    [empty]\n")
 				continue

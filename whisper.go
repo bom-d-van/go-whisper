@@ -10,12 +10,10 @@ import (
 	"math"
 	"os"
 	"regexp"
-	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -33,7 +31,7 @@ const (
 
 	VersionSize = 1
 
-	CompressedArchiveInfoSize     = 80 + 12 + FreeCompressedArchiveInfoSize
+	CompressedArchiveInfoSize     = 80 + 12 + 4 + FreeCompressedArchiveInfoSize
 	FreeCompressedArchiveInfoSize = 32
 
 	avgCompressedPointSize = 2
@@ -236,6 +234,7 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 	whisper.file = file
 	whisper.aggregationMethod = aggregationMethod
 	whisper.xFilesFactor = xFilesFactor
+	whisper.opts = options
 
 	whisper.compressed = options.Compressed
 	whisper.compVersion = 1
@@ -306,7 +305,7 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 	}
 
 	// pre-allocate file size, fallocate proved slower
-	if options.Sparse {
+	if options.Sparse && !options.Compressed {
 		if _, err = whisper.file.Seek(int64(whisper.Size()-1), 0); err != nil {
 			return nil, err
 		}
@@ -544,7 +543,7 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 		b := make([]byte, CompressedArchiveInfoSize)
 		readed, err = whisper.file.Read(b)
 		if err != nil || readed != CompressedArchiveInfoSize {
-			err = fmt.Errorf("Unable to read archive %d metadata: %s", i, err)
+			err = fmt.Errorf("Unable to read compressed archive %d metadata: %s", i, err)
 			return
 		}
 		var offset int
@@ -578,6 +577,8 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 		arc.cblock.pn2.value = unpackFloat64(b[offset : offset+Float64Size])
 		offset += Float64Size
 		arc.cblock.lastByte = byte(unpackInt(b[offset : offset+IntSize]))
+		offset += IntSize
+		arc.cblock.lastByteOffset = unpackInt(b[offset : offset+IntSize])
 		offset += IntSize
 		arc.cblock.lastByteBitPos = unpackInt(b[offset : offset+IntSize])
 		offset += IntSize
@@ -696,6 +697,7 @@ func (whisper *Whisper) WriteHeaderCompressed() (err error) {
 		i += packInt(b, archive.cblock.pn2.interval, i)
 		i += packFloat64(b, archive.cblock.pn2.value, i)
 		i += packInt(b, int(archive.cblock.lastByte), i)
+		i += packInt(b, archive.cblock.lastByteOffset, i)
 		i += packInt(b, archive.cblock.lastByteBitPos, i)
 		i += packInt(b, archive.cblock.count, i)
 		i += packInt(b, int(archive.cblock.crc32), i)
@@ -739,6 +741,15 @@ func (whisper *Whisper) WriteHeaderCompressed() (err error) {
 */
 func (whisper *Whisper) Close() error {
 	if whisper.compressed {
+		// fmt.Println("------ ")
+		// buf := make([]byte, 300)
+		// if err := whisper.fileReadAt(buf, int64(whisper.archives[0].blockOffset(0))); err != nil {
+		// 	panic(err)
+		// }
+		// for i := 0; i < 300-8; i += 8 {
+		// 	fmt.Printf("%02x\n", buf[i:i+8])
+		// }
+
 		if err := whisper.WriteHeaderCompressed(); err != nil {
 			return err
 		}
@@ -1209,13 +1220,19 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 			pointSizeTooSmall := total < archive.numberOfPoints
 			if pointSizeTooSmall || notEnoughBlocks {
 				var etType = etPointSize
-				var newSize = whisper.avgCompressedPointSize
+				var newSize = archive.avgCompressedPointSize
 				var newBlockCount int
+				// log.Printf("archive.numberOfPoints = %+v\n", archive.numberOfPoints)
+				// log.Printf("total = %+v\n", total)
+				// log.Printf("whisper.avgCompressedPointSize = %+v\n", archive.avgCompressedPointSize)
 				if pointSizeTooSmall {
-					newSize = float32((float64(archive.numberOfPoints)/float64(total) + 0.0618) * float64(whisper.avgCompressedPointSize))
+					newSize = float32((float64(archive.numberOfPoints)/float64(total) + 0.0618)) * archive.avgCompressedPointSize
+					// log.Printf("(%d/%d+0.0618)*%f = %f\n", archive.numberOfPoints, total, archive.avgCompressedPointSize, newSize)
 
 					archive.stats.extend.pointSize++
 				} else {
+					// TODO: no need to extend blocks for online conversion if all now-retention points are already saved
+
 					newBlockCount = archive.blockCount + 1
 					etType = etBlock
 
@@ -1256,6 +1273,8 @@ const (
 // 	1. more complex logics of deciding which archive(s) should be resized
 // 	2. add stats
 func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize float32, newBlockCount int) error {
+	// log.Printf("extend %s point: %f -> %f block: %d -> %d\n", time.Duration(archive.secondsPerPoint)*time.Second, archive.avgCompressedPointSize, newSize, archive.blockCount, newBlockCount)
+
 	var rets []*Retention
 	for _, arc := range whisper.archives {
 		ret := &Retention{
@@ -1280,7 +1299,7 @@ func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize f
 	nwhisper, err := CreateWithOptions(
 		whisper.file.Name()+".extend", rets,
 		whisper.aggregationMethod, whisper.xFilesFactor,
-		&Options{Compressed: true, PointsPerBlock: DefaultPointsPerBlock, PointSize: newSize},
+		&Options{Compressed: true, PointsPerBlock: DefaultPointsPerBlock},
 	)
 	if err != nil {
 		return fmt.Errorf("extend: %s", err)
@@ -2061,12 +2080,31 @@ func getFirstDataPointStrict(b []byte) dataPoint {
 }
 
 var autoConvertCount int64
-var MaxAutoConvertCount = int64(runtime.NumCPU() / 2)
+
+// var MaxAutoConvertCount = int64(runtime.NumCPU() / 2)
+var MaxAutoConvertCount = int64(1)
+
+var works = make(chan struct{}, 1)
+var convtThrottleTs int64
 
 func (whisper *Whisper) convertToCompressed() error {
 	// a simple strategy of throttling auto-converstion to compressed format
-	defer atomic.AddInt64(&autoConvertCount, -1)
-	if atomic.AddInt64(&autoConvertCount, 1) >= MaxAutoConvertCount {
+	// defer atomic.AddInt64(&autoConvertCount, -1)
+	// // if atomic.AddInt64(&autoConvertCount, 1) >= MaxAutoConvertCount {
+	// if !atomic.CompareAndSwapInt64(&autoConvertCount, 0, 1) {
+	// 	return nil
+	// }
+	select {
+	case works <- struct{}{}:
+		defer func() {
+			<-works
+		}()
+		if convtThrottleTs > 0 && convtThrottleTs > time.Now().Add(-time.Second).Unix() {
+			return nil
+		} else {
+			convtThrottleTs = time.Now().Unix()
+		}
+	default:
 		return nil
 	}
 

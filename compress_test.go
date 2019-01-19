@@ -524,15 +524,18 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 		panic(err)
 	}
 
+	cwhisper.Close()
+	ncwhisper.Close()
+
 	Now = func() time.Time {
 		return time.Unix(1544478230, 0)
 	}
 
 	{
-		start := Now().Add(time.Hour * -24 * 10)
+		start := Now().Add(time.Hour * -24 * 1)
 		// for i := 0; i < 172800; {
 		var ps []*TimeSeriesPoint
-		for i := 0; i < 10*24*60*60; i++ {
+		for i := 0; i < 1*24*60*60; i++ {
 			if *batch {
 				ps = append(ps, &TimeSeriesPoint{
 					Time:  int(start.Add(time.Duration(i) * time.Second).Unix()),
@@ -543,13 +546,35 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 				})
 
 				if len(ps) >= 300 {
+					cwhisper, err = OpenWithOptions(fpath+".cwsp", &Options{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					ncwhisper, err = OpenWithOptions(fpath, &Options{})
+					if err != nil {
+						t.Fatal(err)
+					}
+
 					if err := cwhisper.UpdateMany(ps); err != nil {
-						t.Error(err)
+						t.Fatal(err)
 					}
 					if err := ncwhisper.UpdateMany(ps); err != nil {
-						t.Error(err)
+						t.Fatal(err)
 					}
 					ps = ps[:0]
+
+					if err := cwhisper.Close(); err != nil {
+						t.Fatal(err)
+					}
+					if err := ncwhisper.Close(); err != nil {
+						t.Fatal(err)
+					}
+
+					// tobreak := true
+					// tobreak := i > 300
+					// if tobreak {
+					// 	break
+					// }
 				}
 
 			} else {
@@ -562,10 +587,10 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 				}}
 
 				if err := cwhisper.UpdateMany(ps); err != nil {
-					t.Error(err)
+					t.Fatal(err)
 				}
 				if err := ncwhisper.UpdateMany(ps); err != nil {
-					t.Error(err)
+					t.Fatal(err)
 				}
 			}
 		}
@@ -613,8 +638,8 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 	// 	}
 	// }
 
-	cwhisper.Close()
-	ncwhisper.Close()
+	// cwhisper.Close()
+	// ncwhisper.Close()
 
 	fmt.Println("go", "run", "bin/forced_verify.go", fpath, fpath+".cwsp")
 	output, err := exec.Command("go", "run", "bin/forced_verify.go", fpath, fpath+".cwsp").CombinedOutput()
@@ -699,6 +724,10 @@ func TestCompressedWhisperInplaceConvert(t *testing.T) {
 	data := []*TimeSeriesPoint{{Time: int(time.Now().Add(-time.Minute).Unix()), Value: 1024.4096}}
 	from, until := int(time.Now().Add(-time.Hour).Unix()), int(time.Now().Unix())
 
+	if _, err := os.Stat(*whisperFile + ".original"); err != nil && os.IsNotExist(err) {
+		exec.Command("cp", *whisperFile, *whisperFile+".original").CombinedOutput()
+	}
+
 	cwsp, err := OpenWithOptions(*whisperFile, &Options{Compressed: true})
 	if err != nil {
 		t.Fatal(err)
@@ -723,12 +752,10 @@ func TestCompressedWhisperInplaceConvert(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pretty.Println(nps)
-	pretty.Println(ops)
-
 	if diff := cmp.Diff(nps, ops, cmp.AllowUnexported(TimeSeries{}), cmpopts.EquateNaNs()); diff != "" {
-		fmt.Println(diff)
-		// fmt.Printf("error: does not match for %s\n", file1)
+		t.Errorf("inplace convert failed\n%s\n", diff)
+		pretty.Println(nps)
+		pretty.Println(ops)
 	}
 
 	cwsp.Close()
