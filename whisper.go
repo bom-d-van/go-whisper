@@ -6,7 +6,6 @@ package whisper
 import (
 	"encoding/binary"
 	"errors"
-	"expvar"
 	"fmt"
 	"math"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -455,14 +455,6 @@ func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error
 		}
 		whisper.archives = append(whisper.archives, unpackArchiveInfo(b))
 	}
-
-	// if !whisper.compressed && options.Compressed {
-	// 	if err := whisper.convertToCompressed(); err != nil {
-	// 		fmt.Printf("Fail to convert file to compressed format: %s", err)
-	// 	} else {
-	// 		return whisper, whisper.readHeaderCompressed()
-	// 	}
-	// }
 
 	return whisper, nil
 }
@@ -913,7 +905,7 @@ func (whisper *Whisper) UpdateMany(points []*TimeSeriesPoint) (err error) {
 	}()
 
 	if !whisper.compressed && whisper.opts.Compressed {
-		if err := whisper.convertToCompressed(); err != nil {
+		if err := whisper.convertToCompressedFormat(); err != nil {
 			return fmt.Errorf("Fail to convert file to compressed format: %s", err)
 			// } else {
 			// 	whisper.readHeaderCompressed()
@@ -2042,28 +2034,60 @@ func getFirstDataPointStrict(b []byte) dataPoint {
 }
 
 var ocWorkers = make(chan struct{}, 1)
-var convertingCount int
+var convertingCount int64
+var conversionLogChan = make(chan string, 64)
+var conversionLogFile = "/var/log/cwhisper.log"
 
-func init() {
-	expvar.Publish("ConvertingFileCount", expvar.Func(func() interface{} { return convertingCount }))
+func Init() {
+	go logConversions()
 }
 
-func SetMaxOnlineConvertionCount(count int) {
-	ocWorkers = make(chan struct{}, count)
+func SetMaxOnlineConvertionCount(count int) { ocWorkers = make(chan struct{}, count) }
+func SetLogConversionLog(path string)       { conversionLogFile = path }
+func GetCovertingFileCount() int64          { return atomic.LoadInt64(&convertingCount) }
+
+func logConversions() {
+	logf, err := os.OpenFile(conversionLogFile, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		fmt.Printf("cwhisper: failed to open %s: %s", conversionLogFile, err)
+		return
+	}
+
+	for file := range conversionLogChan {
+		if _, err := logf.WriteString(file); err != nil {
+			fmt.Printf("cwhisper: failed to log %s: %s", file, err)
+		}
+		if err := logf.Sync(); err != nil {
+			fmt.Printf("cwhisper: failed to sync log: %s", err)
+		}
+	}
 }
 
-func (whisper *Whisper) convertToCompressed() error {
+func (whisper *Whisper) convertToCompressedFormat() error {
 	// a simple strategy of throttling auto-converstion to compressed format
 	select {
 	case ocWorkers <- struct{}{}:
+		start := time.Now()
+		var oldSize int64
+		if stat, err := whisper.file.Stat(); err == nil {
+			oldSize = stat.Size()
+		}
 		defer func() {
+			var newSize int64
+			if stat, err := whisper.file.Stat(); err == nil {
+				newSize = stat.Size()
+			}
+			conversionLogChan <- fmt.Sprintf(
+				"%s,%d,%d,%d\n",
+				whisper.file.Name(), oldSize, newSize, time.Now().Sub(start),
+			)
+			atomic.AddInt64(&convertingCount, -1)
 			<-ocWorkers
 		}()
 
-		// TODO: continue
-		return true
+		atomic.AddInt64(&convertingCount, 1)
 	default:
-		return false
+		return nil
 	}
 
 	src := whisper
@@ -2077,7 +2101,6 @@ func (whisper *Whisper) convertToCompressed() error {
 	dst, err := CreateWithOptions(
 		whisper.file.Name()+".cwsp", rets,
 		src.aggregationMethod, src.xFilesFactor,
-		// &Options{Compressed: true, PointsPerBlock: DefaultPointsPerBlock},
 		whisper.opts,
 	)
 	if err != nil {
@@ -2121,7 +2144,6 @@ func (whisper *Whisper) convertToCompressed() error {
 	}
 
 	whisper.file.Close()
-	os.Symlink(whisper.file.Name(), whisper.file.Name()+".stat")
 
 	nwhisper, err := OpenWithOptions(whisper.file.Name(), whisper.opts)
 	*whisper = *nwhisper
