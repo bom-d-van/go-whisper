@@ -32,7 +32,7 @@ const (
 
 	VersionSize = 1
 
-	CompressedArchiveInfoSize     = 80 + 12 + 4 + FreeCompressedArchiveInfoSize
+	CompressedArchiveInfoSize     = 96 + FreeCompressedArchiveInfoSize
 	FreeCompressedArchiveInfoSize = 32
 
 	avgCompressedPointSize = 2
