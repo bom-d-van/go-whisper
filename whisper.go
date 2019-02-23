@@ -10,12 +10,10 @@ import (
 	"math"
 	"os"
 	"regexp"
-	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -171,18 +169,15 @@ type Whisper struct {
 
 	crc32 uint32
 
-	log string
-
 	opts     *Options
 	Extended bool
 }
 
 // Wrappers for whisper.file operations
 func (whisper *Whisper) fileWriteAt(b []byte, off int64) error {
-	whisper.log += "fileWriteAt;"
 	_, err := whisper.file.WriteAt(b, off)
 	if err != nil {
-		panic(fmt.Errorf("err: %s log: %s file: %p", err, whisper.log, whisper.file))
+		panic(err)
 	}
 	return err
 }
@@ -253,9 +248,6 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 	}
 
 	// Set the archive info
-	// whisper.archives = make([]*archiveInfo, len(retentions))
-	// offset := MetadataSize + (ArchiveInfoSize * len(retentions))
-
 	for _, retention := range retentions {
 		archive := &archiveInfo{Retention: *retention}
 
@@ -267,7 +259,6 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 		}
 
 		whisper.archives = append(whisper.archives, archive)
-		// whisper.archives[i].Retention = *retention
 	}
 
 	offset := whisper.MetadataSize()
@@ -738,17 +729,7 @@ func (whisper *Whisper) WriteHeaderCompressed() (err error) {
   Close the whisper file
 */
 func (whisper *Whisper) Close() error {
-	whisper.log += "wclose;"
 	if whisper.compressed {
-		// fmt.Println("------ ")
-		// buf := make([]byte, 300)
-		// if err := whisper.fileReadAt(buf, int64(whisper.archives[0].blockOffset(0))); err != nil {
-		// 	panic(err)
-		// }
-		// for i := 0; i < 300-8; i += 8 {
-		// 	fmt.Printf("%02x\n", buf[i:i+8])
-		// }
-
 		if err := whisper.WriteHeaderCompressed(); err != nil {
 			return err
 		}
@@ -910,15 +891,13 @@ func (whisper *Whisper) UpdateMany(points []*TimeSeriesPoint) (err error) {
 		}
 	}()
 
-	if !whisper.compressed && whisper.opts.Compressed {
-		if err := whisper.convertToCompressedFormat(); err != nil {
-			return fmt.Errorf("Fail to convert file to compressed format: %s", err)
-			// } else {
-			// 	whisper.readHeaderCompressed()
-		}
-	}
-
-	whisper.log += "update_many;"
+	// if !whisper.compressed && whisper.opts.Compressed {
+	// 	if err := whisper.convertToCompressedFormat(); err != nil {
+	// 		return fmt.Errorf("Fail to convert file to compressed format: %s", err)
+	// 		// } else {
+	// 		// 	whisper.readHeaderCompressed()
+	// 	}
+	// }
 
 	// sort the points, newest first
 	reversePoints(points)
@@ -1009,8 +988,6 @@ func (whisper *Whisper) archiveUpdateMany(archive *archiveInfo, points []*TimeSe
 
 func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points []*TimeSeriesPoint) error {
 	alignedPoints := alignPoints(archive, points)
-
-	whisper.log += fmt.Sprintf("archiveUpdateManyCompressed(%d);hasBuffer=%t;", len(alignedPoints), archive.hasBuffer())
 
 	if !archive.hasBuffer() {
 		return archive.appendToBlockAndRotate(alignedPoints)
@@ -1235,8 +1212,6 @@ const (
 func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize float32, newBlockCount int) error {
 	// log.Printf("extend %s point: %f -> %f block: %d -> %d\n", time.Duration(archive.secondsPerPoint)*time.Second, archive.avgCompressedPointSize, newSize, archive.blockCount, newBlockCount)
 
-	whisper.log += fmt.Sprintf("extend: %f %d; ", newSize, newBlockCount)
-
 	var rets []*Retention
 	for _, arc := range whisper.archives {
 		ret := &Retention{
@@ -1369,7 +1344,7 @@ func (whisper *Whisper) getBaseInterval(archive *archiveInfo) int {
 
 	baseInterval, err := whisper.readInt(archive.Offset())
 	if err != nil {
-		panic("Failed to read baseInterval" + err.Error())
+		panic(fmt.Sprintf("Failed to read baseInterval: %s", err.Error()))
 	}
 	return baseInterval
 }
@@ -2039,144 +2014,6 @@ func getFirstDataPointStrict(b []byte) dataPoint {
 		return dp
 	}
 	return dataPoint{}
-}
-
-var workTokens = make(chan struct{}, runtime.NumCPU())
-var convertingCount int64
-var conversionLogChan = make(chan string, 64)
-var conversionLogFile = "/var/lib/carbon/cwhisper.log"
-
-func Init() {
-	go logConversions()
-	go func() {
-		ticker := time.NewTicker(time.Second / time.Duration(cap(workTokens)))
-		for range ticker.C {
-			workTokens <- struct{}{}
-		}
-	}()
-}
-
-func SetMaxOnlineConvertionCount(count int) {
-	if count > 0 {
-		workTokens = make(chan struct{}, count)
-	}
-}
-func SetLogConversionLog(path string) {
-	if path != "" {
-		conversionLogFile = path
-	}
-}
-func GetCovertingFileCount() int64 { return atomic.LoadInt64(&convertingCount) }
-
-func logConversions() {
-	logf, err := os.OpenFile(conversionLogFile, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		fmt.Printf("cwhisper: failed to open %s: %s", conversionLogFile, err)
-		return
-	}
-
-	for file := range conversionLogChan {
-		if _, err := logf.WriteString(file); err != nil {
-			fmt.Printf("cwhisper: failed to log %s: %s", file, err)
-		}
-		if err := logf.Sync(); err != nil {
-			fmt.Printf("cwhisper: failed to sync log: %s", err)
-		}
-	}
-}
-
-func (whisper *Whisper) convertToCompressedFormat() error {
-	// a simple strategy of throttling auto-converstion to compressed format
-	select {
-	case <-workTokens:
-		if atomic.LoadInt64(&convertingCount) >= int64(cap(workTokens)) {
-			return nil
-		}
-
-		start := time.Now()
-		var oldSize int64
-		if stat, err := whisper.file.Stat(); err == nil {
-			oldSize = stat.Size()
-		}
-		defer func() {
-			var newSize int64
-			if stat, err := whisper.file.Stat(); err == nil {
-				newSize = stat.Size()
-			}
-			conversionLogChan <- fmt.Sprintf(
-				"%s,%d,%d,%d,%d\n",
-				whisper.file.Name(), oldSize, newSize, time.Now().Sub(start), start.Unix(),
-			)
-			atomic.AddInt64(&convertingCount, -1)
-		}()
-
-		atomic.AddInt64(&convertingCount, 1)
-	default:
-		return nil
-	}
-
-	var rets []*Retention
-	for _, arc := range whisper.archives {
-		rets = append(rets, &Retention{secondsPerPoint: arc.secondsPerPoint, numberOfPoints: arc.numberOfPoints})
-	}
-
-	os.Remove(whisper.file.Name() + ".cwsp")
-	dst, err := CreateWithOptions(
-		whisper.file.Name()+".cwsp", rets,
-		whisper.aggregationMethod, whisper.xFilesFactor,
-		whisper.opts,
-	)
-	if err != nil {
-		return err
-	}
-
-	clog := ""
-	for i := len(whisper.archives) - 1; i >= 0; i-- {
-		archive := whisper.archives[i]
-
-		b := make([]byte, archive.Size())
-		err := whisper.fileReadAt(b, archive.Offset())
-		if err != nil {
-			return err
-		}
-		points := unpackDataPoints(b)
-		sort.Slice(points, func(i, j int) bool {
-			return points[i].interval < points[j].interval
-		})
-		var index int
-		for i := 0; i < len(points); i++ {
-			if points[i].interval > 0 {
-				points[index] = points[i]
-				index++
-			}
-		}
-		points = points[:index]
-
-		clog += fmt.Sprintf("archive.%d: %d", i, len(points))
-
-		if err := dst.archives[i].appendToBlockAndRotate(points); err != nil {
-			return err
-		}
-	}
-
-	if err := dst.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(dst.file.Name(), whisper.file.Name()); err != nil {
-		return err
-	}
-
-	whisper.file.Close()
-	oldFile := whisper.file
-	nwhisper, err := OpenWithOptions(whisper.file.Name(), whisper.opts)
-	*whisper = *nwhisper
-	for _, archive := range whisper.archives {
-		archive.whisper = whisper
-	}
-
-	whisper.log += fmt.Sprintf("%s; convert (err: %s file: %p oldFile: %p newFile: %p); ", clog, err, whisper.file, oldFile, nwhisper.file)
-
-	return err
 }
 
 /*

@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"math/bits"
+	"sort"
 
 	"github.com/kr/pretty"
 )
@@ -691,4 +692,52 @@ func dumpBits(data ...uint64) string {
 		l += data[i]
 	}
 	return fmt.Sprintf("%08b len(%d) bit_pos(%d)", bw.buf[:bw.index+1], l, bw.bitPos)
+}
+
+func (whisper *Whisper) CompressTo(dstPath string) error {
+	var rets []*Retention
+	for _, arc := range whisper.archives {
+		rets = append(rets, &Retention{secondsPerPoint: arc.secondsPerPoint, numberOfPoints: arc.numberOfPoints})
+	}
+
+	dst, err := CreateWithOptions(
+		dstPath, rets,
+		whisper.aggregationMethod, whisper.xFilesFactor,
+		whisper.opts,
+	)
+	if err != nil {
+		return err
+	}
+
+	for i := len(whisper.archives) - 1; i >= 0; i-- {
+		archive := whisper.archives[i]
+
+		b := make([]byte, archive.Size())
+		err := whisper.fileReadAt(b, archive.Offset())
+		if err != nil {
+			return err
+		}
+		points := unpackDataPoints(b)
+		sort.Slice(points, func(i, j int) bool {
+			return points[i].interval < points[j].interval
+		})
+		var index int
+		for i := 0; i < len(points); i++ {
+			if points[i].interval > 0 {
+				points[index] = points[i]
+				index++
+			}
+		}
+		points = points[:index]
+
+		if err := dst.archives[i].appendToBlockAndRotate(points); err != nil {
+			return err
+		}
+	}
+
+	if err := dst.Close(); err != nil {
+		return err
+	}
+
+	return err
 }
