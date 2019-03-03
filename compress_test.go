@@ -56,7 +56,7 @@ func TestBitReader(t *testing.T) {
 }
 
 func TestBitsReadWrite(t *testing.T) {
-	buf := make([]byte, 32)
+	buf := make([]byte, 256)
 
 	var bw BitsWriter
 	bw.buf = buf
@@ -66,45 +66,26 @@ func TestBitsReadWrite(t *testing.T) {
 	br.buf = buf
 	br.bitPos = 7
 
-	// fmt.Printf("%08b\n", 1)
-	// fmt.Printf("%08b\n", 5)
-	// fmt.Printf("%016b\n", 97)
-
-	// // 1 0000010 1 01100001 00000000
-	// // 1 0000010 1 01100001 0000000 00000000
-
-	// bw.Write(1, 1)
-	// bw.Write(8, 5)
-	// bw.Write(16, 97)
-	// bw.Write(32, 123)
-	// bw.Write(64, math.Float64bits(95.1))
-	// bw.Write(64, 0xfffffffff1ffffff)
-
-	// // br.Read(1)
-	// fmt.Printf("br.Read(1) = %v\n", br.Read(1))
-	// fmt.Printf("br.Read(8) = %v\n", br.Read(8))
-	// fmt.Printf("br.Read(16) = %v\n", br.Read(16))
-	// fmt.Printf("br.Read(32) = %v\n", br.Read(32))
-	// fmt.Printf("br.Read(64) = %v\n", math.Float64frombits(br.Read(64)))
-	// fmt.Printf("br.Read(64) = %x\n", br.Read(64))
-
 	input := []struct {
 		val uint64
 		len int
 	}{
-		{len: 1, val: 1},
 		{len: 8, val: 5},
 		{len: 16, val: 97},
 		{len: 32, val: 123},
 		{len: 64, val: math.Float64bits(95.1)},
-		{len: 64, val: 0xfffffffff1ffffff},
+		{len: 64, val: 0xf1f2f3f4f5f6f7f8},
+
+		{len: 1, val: 1},
+		{len: 15, val: 0x7f7f},
+		{len: 55, val: 0x7f2f3f4f5f6f7f},
 	}
 	for _, d := range input {
 		bw.Write(d.len, d.val)
 	}
 	for i, d := range input {
 		if got, want := br.Read(d.len), d.val; got != want {
-			t.Errorf("%d: br.Read(%d) = %d; want %d", i, d.len, got, want)
+			t.Errorf("%d: br.Read(%d) = %x; want %b", i, d.len, got, want)
 		}
 	}
 }

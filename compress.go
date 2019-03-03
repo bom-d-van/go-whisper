@@ -23,6 +23,8 @@ func Debug(compress, bitsWrite bool) {
 // 	1. review buffer usage in read/write
 // 	2. unify/simplify bits read/write api
 
+// TODO: IMPORTANT: benchmark read/write performances of compresssed and standard whisper
+
 // Timestamp:
 // 1. The block header stores the starting time stamp, t−1,
 // which is aligned to a two hour window; the first time
@@ -622,63 +624,15 @@ func (br *BitsReader) Read(c int) uint64 {
 		continue
 	}
 
-	// log.Printf("c = %d data = %064b\n", oldc, data)
-	// 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0
-	switch {
-	case oldc <= 8:
-	case oldc <= 16:
-		diff := oldc - 8
-		return ((data >> uint(diff)) & 0xFF) |
-			(data&(1<<uint(diff)-1))<<8
-	case oldc <= 24:
-		diff := oldc - 16
-		return ((data >> uint(diff+8)) & 0xFF) |
-			(((data >> uint(diff)) & 0xFF) << 8) |
-			(data&(1<<uint(diff)-1))<<16
-	case oldc <= 32:
-		diff := oldc - 24
-		return ((data >> uint(diff+16)) & 0xFF) |
-			(((data >> uint(diff+8)) & 0xFF) << 8) |
-			(((data >> uint(diff)) & 0xFF) << 16) |
-			(data&(1<<uint(diff)-1))<<24
-	case oldc <= 40:
-		diff := oldc - 32
-		return ((data >> uint(diff+24)) & 0xFF) |
-			(((data >> uint(diff+16)) & 0xFF) << 8) |
-			(((data >> uint(diff+8)) & 0xFF) << 16) |
-			(((data >> uint(diff)) & 0xFF) << 24) |
-			(data&(1<<uint(diff)-1))<<32
-	case oldc <= 48:
-		diff := oldc - 40
-		return ((data >> uint(diff+32)) & 0xFF) |
-			(((data >> uint(diff+24)) & 0xFF) << 8) |
-			(((data >> uint(diff+16)) & 0xFF) << 16) |
-			(((data >> uint(diff+8)) & 0xFF) << 24) |
-			(((data >> uint(diff)) & 0xFF) << 32) |
-			(data&(1<<uint(diff)-1))<<40
-	case oldc <= 56:
-		diff := oldc - 48
-		return ((data >> uint(diff+40)) & 0xFF) |
-			(((data >> uint(diff+32)) & 0xFF) << 8) |
-			(((data >> uint(diff+24)) & 0xFF) << 16) |
-			(((data >> uint(diff+16)) & 0xFF) << 24) |
-			(((data >> uint(diff+8)) & 0xFF) << 32) |
-			(((data >> uint(diff)) & 0xFF) << 40) |
-			(data&(1<<uint(diff)-1))<<48
-	case oldc <= 64:
-		diff := oldc - 56
-		return ((data >> uint(diff+48)) & 0xFF) |
-			(((data >> uint(diff+40)) & 0xFF) << 8) |
-			(((data >> uint(diff+32)) & 0xFF) << 16) |
-			(((data >> uint(diff+24)) & 0xFF) << 24) |
-			(((data >> uint(diff+16)) & 0xFF) << 32) |
-			(((data >> uint(diff+8)) & 0xFF) << 40) |
-			(((data >> uint(diff)) & 0xFF) << 48) |
-			(data&(1<<uint(diff)-1))<<56
-	default:
-		panic("read count > 64")
+	var result uint64
+	for i := 8; i <= 64; i += 8 {
+		if oldc-i < 0 {
+			result |= (data & (1<<uint(oldc%8) - 1)) << uint(i-8)
+			break
+		}
+		result |= ((data >> uint(oldc-i)) & 0xFF) << uint(i-8)
 	}
-	return data
+	return result
 }
 
 func dumpBits(data ...uint64) string {

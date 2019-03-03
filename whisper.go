@@ -267,9 +267,6 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 		archive.offset = offset
 
 		if whisper.compressed {
-			// archive.avgCompressedPointSize = options.PointSize
-			// archive.avgCompressedPointSize = whisper.avgCompressedPointSize
-
 			archive.cblock.lastByteBitPos = 7
 			if retention.numberOfPoints > whisper.pointsPerBlock {
 				archive.blockSize = int(float64(whisper.pointsPerBlock) * float64(archive.avgCompressedPointSize))
@@ -277,7 +274,6 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 				archive.blockSize = int(float64(retention.numberOfPoints) * float64(archive.avgCompressedPointSize))
 			}
 
-			// archive.blockRanges = make([]blockRange, whisper.blockCount(archive))
 			archive.blockRanges = make([]blockRange, archive.blockCount)
 
 			offset += archive.blockSize * archive.blockCount

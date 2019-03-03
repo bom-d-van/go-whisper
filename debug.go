@@ -47,7 +47,7 @@ func (whisper *Whisper) CheckIntegrity() {
 	}
 }
 
-func (whisper *Whisper) Dump(full bool) {
+func (whisper *Whisper) Dump(all bool) {
 	// fmt.Printf("is_compressed:             %t\n", whisper.compressed)
 	fmt.Printf("compressed:                %t\n", whisper.compressed)
 	fmt.Printf("aggregation_method:        %d\n", whisper.aggregationMethod)
@@ -62,7 +62,7 @@ func (whisper *Whisper) Dump(full bool) {
 		arc.dumpInfo()
 	}
 
-	if !full {
+	if !all {
 		return
 	}
 
