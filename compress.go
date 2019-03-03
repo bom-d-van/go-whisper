@@ -703,7 +703,7 @@ func (whisper *Whisper) CompressTo(dstPath string) error {
 	dst, err := CreateWithOptions(
 		dstPath, rets,
 		whisper.aggregationMethod, whisper.xFilesFactor,
-		whisper.opts,
+		&Options{FLock: true, Compressed: true, PointsPerBlock: 7200},
 	)
 	if err != nil {
 		return err
@@ -741,3 +741,5 @@ func (whisper *Whisper) CompressTo(dstPath string) error {
 
 	return err
 }
+
+func (whisper *Whisper) IsCompressed() bool { return whisper.compressed }

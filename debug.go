@@ -48,14 +48,11 @@ func (whisper *Whisper) CheckIntegrity() {
 }
 
 func (whisper *Whisper) Dump(full bool) {
-	if !whisper.compressed {
-		panic("Dump works only for compressed whisper files.")
-	}
-
+	// fmt.Printf("is_compressed:             %t\n", whisper.compressed)
+	fmt.Printf("compressed:                %t\n", whisper.compressed)
 	fmt.Printf("aggregation_method:        %d\n", whisper.aggregationMethod)
 	fmt.Printf("max_retention:             %d\n", whisper.maxRetention)
 	fmt.Printf("x_files_factor:            %f\n", whisper.xFilesFactor)
-	fmt.Printf("compressed:                %t\n", whisper.compressed)
 	fmt.Printf("comp_version:              %d\n", whisper.compVersion)
 	fmt.Printf("points_per_block:          %d\n", whisper.pointsPerBlock)
 	fmt.Printf("avg_compressed_point_size: %f\n", whisper.avgCompressedPointSize)

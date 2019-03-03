@@ -1207,8 +1207,8 @@ const (
 
 // TODO:
 // 	0. test extend with UpdateMany api!
-// 	1. more complex logics of deciding which archive(s) should be resized [done?]
-// 	2. add stats [done?]
+// 	1. more complex logics of choosing which archive(s) should be resized [done]
+// 	2. add stats [done]
 func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize float32, newBlockCount int) error {
 	// log.Printf("extend %s point: %f -> %f block: %d -> %d\n", time.Duration(archive.secondsPerPoint)*time.Second, archive.avgCompressedPointSize, newSize, archive.blockCount, newBlockCount)
 
@@ -2037,3 +2037,5 @@ func crc32(data []byte, prev uint32) uint32 {
 	}
 	return crc ^ 0xFFFFFFFF
 }
+
+func (whisper *Whisper) File() *os.File { return whisper.file }

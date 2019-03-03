@@ -4,14 +4,18 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"flag"
 	"fmt"
 	"io"
-	"log"
+	"io/ioutil"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,55 +23,246 @@ import (
 )
 
 func main() {
-	// dir, err := os.Open(os.Args[0])
-	// if err != nil {
-	// 	panic(err)
-	// }
-	var storeDir string
-	var progressDB string
-	var ratePerSec int
-	var logFile string
-	var pidFile string
+	var storeDir = flag.String("store", "/var/lib/carbon/whisper", "path to whisper data files")
+	// var targetFile = flag.String("file", "", "only convert specified file")
+	var homdDir = flag.String("home", "/var/lib/carbon/convert", "home directory of convert")
+	var rate = flag.Int("rate", runtime.NumCPU(), "count of concurrent conversion per second")
+	// var stopOnErrors = flag.Int("error", runtime.NumCPU(), "stop conversion when errors reach threshold")
+	var help = flag.Bool("help", false, "show help message")
+	var debug = flag.Bool("debug", false, "show debug info")
 
-	signalc := make(chan os.Signal, 1)
-	signal.Notify(shutdown, os.Interrupt)
+	flag.BoolVar(help, "h", false, "show help message")
+	flag.Parse()
+	if *help {
+		fmt.Println("convert: convert standard whisper files to compressed format")
+		flag.PrintDefaults()
+		os.Exit(0)
+	}
+	if err := os.MkdirAll(*homdDir, 0644); err != nil {
+		panic(err)
+	}
 
-	shutdownc := make(chan struct{}, 1)
-	taskc := make(chan string, ratePerSec)
-	go schedule(taskc, shutdownc)
-	// go initLog(shutdownc)
+	var progressDB = *homdDir + "/progress.db"
+	var pidFile = *homdDir + "/pid"
+	var taskc = make(chan string, *rate)
+	var convertingFiles sync.Map
+	var convertingCount int64
+	var progressc = make(chan string, *rate)
+	var exitc = make(chan struct{})
 
+	if err := ioutil.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
+		fmt.Printf("main: failed to save pid: %s\n", err)
+	}
+
+	go onExit(&convertingCount, &convertingFiles, progressc, taskc, exitc)
+	go schedule(*rate, taskc, progressDB, progressc, &convertingCount, &convertingFiles, exitc, *debug)
+	go logProgress(progressDB, progressc)
 	for {
-		log.Printf("info: start new conversion cycle")
-		files, dur, err := scan(storeDir)
-		if err != nil {
-			return
-		}
-		log.Printf("info: scan %d files took %s", len(files), dur)
-
-		cwsps, err := readProgress()
-		// tasks :=
-
-		var tasks []string
-		for _, file := range files {
-			if _, ok := cwsps[file]; ok {
-				continue
-			}
-			tasks = append(tasks, file)
-		}
-
-		log.Printf("info: uncompressed %d total %d %.2f", len(tasks), len(files), float64(len(tasks))/float64(len(files)))
+		scanAndDispatch(*storeDir, progressDB, taskc)
+		time.Sleep(time.Minute)
 	}
 }
 
-var progress = struct {
-}{}
+func onExit(convertingCount *int64, convertingFiles *sync.Map, progressc chan string, taskc chan string, exitc chan struct{}) {
+	shutdownc := make(chan os.Signal, 1)
+	signal.Notify(shutdownc, os.Interrupt)
 
-func schedule(rate int, taskc chan string, shutdownc chan os.Signal) {
-	ticker := time.NewTicker(time.Second / time.Duration(rate))
-	for range ticker {
+	<-shutdownc
+	close(exitc)
+	fmt.Printf("exit: program shutting down\n")
+	for {
+		if c := atomic.LoadInt64(convertingCount); c > 0 {
+			fmt.Printf("exit: %d files are still converting\n", c)
+			convertingFiles.Range(func(k, v interface{}) bool {
+				fmt.Printf("\t%s\n", k)
+				return true
+			})
 
+			time.Sleep(time.Second)
+			continue
+		}
+		close(progressc)
+		time.Sleep(time.Second)
+		os.Exit(0)
 	}
+}
+
+func schedule(rate int, taskc chan string, db string, progressc chan string, convertingCount *int64, convertingFiles *sync.Map, exitc chan struct{}, debug bool) {
+	ticker := time.NewTicker(time.Second / time.Duration(rate))
+	for range ticker.C {
+		if atomic.LoadInt64(convertingCount) >= int64(rate) {
+			continue
+		}
+
+		var metric string
+		select {
+		case metric = <-taskc:
+		case <-exitc:
+			fmt.Printf("schedule: stopped")
+			return
+		}
+		atomic.AddInt64(convertingCount, 1)
+		convertingFiles.Store(metric, struct{}{})
+		go func() {
+			err := convert(metric, progressc, convertingCount, convertingFiles, debug)
+			if err != nil {
+				fmt.Println(err)
+			}
+		}()
+	}
+}
+
+func readProgress(db string) (files map[string]struct{}, err error) {
+	file, err := os.Open(db)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	files = map[string]struct{}{}
+	var line []byte
+	r := bufio.NewReader(file)
+	for {
+		line, _, err = r.ReadLine()
+		if err == io.EOF {
+			err = nil
+			break
+		}
+		if len(line) == 0 {
+			continue
+		}
+		a := bytes.Split(line, []byte(","))
+		files[string(a[0])] = struct{}{}
+	}
+
+	return
+}
+
+func logProgress(progressDB string, progressc chan string) {
+	logf, err := os.OpenFile(progressDB, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		fmt.Printf("log: failed to open %s: %s\n", progressDB, err)
+		return
+	}
+
+	for file := range progressc {
+		if _, err := logf.WriteString(file); err != nil {
+			fmt.Printf("log: failed to log %s: %s\n", file, err)
+		}
+		if err := logf.Sync(); err != nil {
+			fmt.Printf("log: failed to sync log: %s\n", err)
+		}
+	}
+
+	if err := logf.Close(); err != nil {
+		fmt.Printf("log: failed to close db: %s\n", err)
+	}
+}
+
+func convert(path string, progressc chan string, convertingCount *int64, convertingFiles *sync.Map, debugf bool) error {
+	if debugf {
+		fmt.Printf("convert: handling %s\n", path)
+	}
+
+	db, err := whisper.OpenWithOptions(path, &whisper.Options{FLock: true})
+	if err != nil {
+		return fmt.Errorf("convert: failed to open %s: %s", path, err)
+	}
+
+	defer func() {
+		atomic.AddInt64(convertingCount, -1)
+		convertingFiles.Delete(path)
+	}()
+
+	if db.IsCompressed() {
+		if debugf {
+			fmt.Printf("convert: %s is already compressed\n", path)
+		}
+		return nil
+	}
+
+	start := time.Now()
+	var oldSize int64
+	if stat, err := os.Stat(path); err == nil {
+		oldSize = stat.Size()
+	}
+	defer func() {
+		if err := recover(); err != nil {
+			fmt.Printf("convert: %s panicked: %s\n", path, err)
+			debug.PrintStack()
+			return
+		}
+
+		stat, err := os.Stat(path)
+		if err != nil {
+			fmt.Printf("convert: failed to stat new size of %s: %s\n", path, err)
+		}
+		newSize := stat.Size()
+		progressc <- fmt.Sprintf(
+			"%s,%d,%d,%d,%d\n",
+			path, oldSize, newSize, time.Now().Sub(start), start.Unix(),
+		)
+	}()
+
+	tmpPath := path + ".cwsp"
+	os.Remove(tmpPath)
+	if err := db.CompressTo(tmpPath); err != nil {
+		return fmt.Errorf("convert: failed to compress %s: %s", path, err)
+	}
+	defer os.Remove(tmpPath)
+
+	cfile, err := os.Open(tmpPath)
+	if err != nil {
+		return fmt.Errorf("convert: failed to open %s: %s", tmpPath, err)
+	}
+	cstat, err := cfile.Stat()
+	if err != nil {
+		return fmt.Errorf("convert: failed to stat %s: %s", tmpPath, err)
+	}
+
+	if err := db.File().Truncate(cstat.Size()); err != nil {
+		fmt.Printf("convert: failed to truncate %s: %s", path, err)
+	}
+
+	if _, err := db.File().Seek(0, 0); err != nil {
+		return fmt.Errorf("convert: failed to seek %s: %s", path, err)
+	}
+	if _, err := io.Copy(db.File(), cfile); err != nil {
+		os.Remove(path) // original file is most likely corrupted
+		return fmt.Errorf("convert: failed to copy compressed data for %s: %s", path, err)
+	}
+
+	if err := db.File().Close(); err != nil {
+		return fmt.Errorf("convert: failed to close converted file %s: %s", path, err)
+	}
+
+	return nil
+}
+
+func scanAndDispatch(storeDir, progressDB string, taskc chan string) {
+	fmt.Printf("sd: start new conversion cycle\n")
+	files, dur, err := scan(storeDir)
+	if err != nil {
+		return
+	}
+	fmt.Printf("sd: scan %d files took %s\n", len(files), dur)
+
+	cwsps, err := readProgress(progressDB)
+	var tasks []string
+	for _, file := range files {
+		if _, ok := cwsps[file]; ok {
+			continue
+		}
+		tasks = append(tasks, file)
+	}
+
+	fmt.Printf("sd: uncompressed %d total %d pct %.2f\n", len(tasks), len(files), float64(len(tasks))/float64(len(files)))
+	start := time.Now()
+	for _, task := range tasks {
+		taskc <- task
+	}
+
+	fmt.Printf("sd: done took %s\n", time.Now().Sub(start))
 }
 
 func scan(dir string) (files []string, dur time.Duration, err error) {
@@ -83,127 +278,4 @@ func scan(dir string) (files []string, dur time.Duration, err error) {
 	})
 	dur = time.Now().Sub(start)
 	return
-}
-
-func readProgress(db string) (files map[string]struct{}, err error) {
-	file, err := os.Open(db)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
-	r := bufio.NewReader(file)
-	var line string
-	for {
-		line, err = r.ReadLine()
-		if err == io.EOF {
-			err = nil
-			break
-		}
-		if line == "" {
-			continue
-		}
-		a := strings.Split(line, ",")
-		files[a[0]] = struct{}{}
-	}
-	if err == io.EOF {
-		err = nil
-	}
-	return
-}
-
-var workTokens = make(chan struct{}, runtime.NumCPU())
-var convertingCount int64
-var conversionLogChan = make(chan string, 64)
-var conversionLogFile = "/var/lib/carbon/cwhisper.log"
-
-func Init() {
-	go logConversions()
-	go func() {
-		ticker := time.NewTicker(time.Second / time.Duration(cap(workTokens)))
-		for range ticker.C {
-			workTokens <- struct{}{}
-		}
-	}()
-}
-
-func SetMaxOnlineConvertionCount(count int) {
-	if count > 0 {
-		workTokens = make(chan struct{}, count)
-	}
-}
-func SetLogConversionLog(path string) {
-	if path != "" {
-		conversionLogFile = path
-	}
-}
-func GetCovertingFileCount() int64 { return atomic.LoadInt64(&convertingCount) }
-
-func logConversions() {
-	logf, err := os.OpenFile(conversionLogFile, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		fmt.Printf("cwhisper: failed to open %s: %s", conversionLogFile, err)
-		return
-	}
-
-	for file := range conversionLogChan {
-		if _, err := logf.WriteString(file); err != nil {
-			fmt.Printf("cwhisper: failed to log %s: %s", file, err)
-		}
-		if err := logf.Sync(); err != nil {
-			fmt.Printf("cwhisper: failed to sync log: %s", err)
-		}
-	}
-}
-
-func convert() {
-	// a simple strategy of throttling auto-converstion to compressed format
-	select {
-	case <-workTokens:
-		if atomic.LoadInt64(&convertingCount) >= int64(cap(workTokens)) {
-			return nil
-		}
-
-		start := time.Now()
-		var oldSize int64
-		if stat, err := whisper.file.Stat(); err == nil {
-			oldSize = stat.Size()
-		}
-		defer func() {
-			var newSize int64
-			if stat, err := whisper.file.Stat(); err == nil {
-				newSize = stat.Size()
-			}
-			conversionLogChan <- fmt.Sprintf(
-				"%s,%d,%d,%d,%d\n",
-				whisper.file.Name(), oldSize, newSize, time.Now().Sub(start), start.Unix(),
-			)
-			atomic.AddInt64(&convertingCount, -1)
-		}()
-
-		atomic.AddInt64(&convertingCount, 1)
-	default:
-		return nil
-	}
-
-	os.Remove(whisper.file.Name() + ".cwsp")
-
-	whisper.OpenWithOptions(whisper.file.Name()+".cwsp", whisper.Options{})
-
-	// if err := os.Rename(whisper.file.Name(), whisper.file.Name()+".bak"); err != nil {
-	// 	fmt.Printf("failed to backup %s: %s\n", whisper.file.Name(), err)
-	// }
-	if err := os.Rename(dst.file.Name(), whisper.file.Name()); err != nil {
-		return err
-	}
-
-	whisper.file.Close()
-	oldFile := whisper.file
-	nwhisper, err := OpenWithOptions(whisper.file.Name(), whisper.opts)
-	*whisper = *nwhisper
-	for _, archive := range whisper.archives {
-		archive.whisper = whisper
-	}
-
-	// whisper.log += fmt.Sprintf("%s; convert (err: %s file: %p oldFile: %p newFile: %p); ", clog, err, whisper.file, oldFile, nwhisper.file)
 }
