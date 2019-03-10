@@ -15,8 +15,6 @@ import (
 	"github.com/kr/pretty"
 )
 
-var _ = pretty.Println
-
 func init() {
 	log.SetFlags(log.Lshortfile)
 }

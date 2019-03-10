@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"math"
@@ -11,23 +12,23 @@ import (
 	whisper "github.com/go-graphite/go-whisper"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-
-	"github.com/kr/pretty"
 )
-
-var _ = pretty.Println
 
 func init() {
 	log.SetFlags(log.Lshortfile)
 }
 
 func main() {
-	// whisper.Now = func() time.Time {
-	// 	return time.Unix(1544478230, 0)
-	// }
+	now := flag.Int64("now", time.Now().Unix(), "specify the current time")
+	ignoreBuffer := flag.Bool("ignore-buffer", false, "ignore points in buffer that haven't been propagated")
+	flag.Parse()
 
-	file1 := os.Args[1]
-	file2 := os.Args[2]
+	whisper.Now = func() time.Time {
+		return time.Unix(*now, 0)
+	}
+
+	file1 := flag.Args()[0]
+	file2 := flag.Args()[1]
 
 	db1, err := whisper.OpenWithOptions(file1, &whisper.Options{})
 	if err != nil {
@@ -38,13 +39,11 @@ func main() {
 		panic(err)
 	}
 
-	for _, ret := range db1.Retentions() {
+	var bad bool
+	for index, ret := range db1.Retentions() {
 		now := int(whisper.Now().Unix())
 		from := now - ret.MaxRetention()
 		until := now
-
-		// from = 1545151404
-		// until = 1545324204
 
 		fmt.Println(time.Second*time.Duration(ret.MaxRetention()), ret.SecondsPerPoint())
 		log.Printf("from = %+v\n", from)
@@ -76,6 +75,19 @@ func main() {
 
 		wg.Wait()
 
+		if *ignoreBuffer && index > 0 {
+			if !db1.IsCompressed() {
+				vals := dps1.Values()
+				vals[len(vals)-1] = math.NaN()
+				vals[len(vals)-2] = math.NaN()
+			}
+			if !db2.IsCompressed() {
+				vals := dps2.Values()
+				vals[len(vals)-1] = math.NaN()
+				vals[len(vals)-2] = math.NaN()
+			}
+		}
+
 		var vals1, vals2 int
 		for _, p := range dps1.Values() {
 			if !math.IsNaN(p) {
@@ -93,7 +105,10 @@ func main() {
 		if diff := cmp.Diff(dps1.Points(), dps2.Points(), cmp.AllowUnexported(whisper.TimeSeries{}), cmpopts.EquateNaNs()); diff != "" {
 			fmt.Println(diff)
 			fmt.Printf("error: does not match for %s\n", file1)
+			bad = true
 		}
-		// return
+	}
+	if bad {
+		os.Exit(1)
 	}
 }

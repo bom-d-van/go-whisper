@@ -54,13 +54,15 @@ func main() {
 		fmt.Printf("main: failed to save pid: %s\n", err)
 	}
 
-	go onExit(&convertingCount, &convertingFiles, progressc, taskc, exitc)
 	go schedule(*rate, taskc, progressDB, progressc, &convertingCount, &convertingFiles, exitc, *debug)
 	go logProgress(progressDB, progressc)
-	for {
-		scanAndDispatch(*storeDir, progressDB, taskc)
-		time.Sleep(time.Minute)
-	}
+	go func() {
+		for {
+			scanAndDispatch(*storeDir, progressDB, taskc)
+			time.Sleep(time.Minute)
+		}
+	}()
+	onExit(&convertingCount, &convertingFiles, progressc, taskc, exitc)
 }
 
 func onExit(convertingCount *int64, convertingFiles *sync.Map, progressc chan string, taskc chan string, exitc chan struct{}) {

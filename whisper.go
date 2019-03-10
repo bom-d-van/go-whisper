@@ -269,9 +269,9 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 		if whisper.compressed {
 			archive.cblock.lastByteBitPos = 7
 			if retention.numberOfPoints > whisper.pointsPerBlock {
-				archive.blockSize = int(float64(whisper.pointsPerBlock) * float64(archive.avgCompressedPointSize))
+				archive.blockSize = int(float64(whisper.pointsPerBlock)*float64(archive.avgCompressedPointSize)) + endOfBlockSize
 			} else {
-				archive.blockSize = int(float64(retention.numberOfPoints) * float64(archive.avgCompressedPointSize))
+				archive.blockSize = int(float64(retention.numberOfPoints)*float64(archive.avgCompressedPointSize)) + endOfBlockSize
 			}
 
 			archive.blockRanges = make([]blockRange, archive.blockCount)
@@ -1098,10 +1098,14 @@ func (whisper *Whisper) getNextArchive(higher *archiveInfo) *archiveInfo {
 func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 	whisper := archive.whisper // TODO: optimize away?
 
-	blockBuffer := make([]byte, len(dps)*PointSize+endOfBlockSize)
+	// In worst case scenario all data points would required 2 bytes more space
+	// after compression, this buffer size make sure that it's always big enough
+	// to contain the compressed result
+	const extraPointSize = 2
+	blockBuffer := make([]byte, len(dps)*(PointSize+extraPointSize)+endOfBlockSize)
 
 	for {
-		size, left, rotate := archive.appendPointsToBlock(blockBuffer, dps...)
+		size, left, rotate := archive.appendPointsToBlock(blockBuffer, dps)
 
 		// flush block
 		end := size + endOfBlockSize // include end-of-block marker
@@ -1784,9 +1788,6 @@ type blockRange struct {
 	start, end int
 	count      int
 	crc32      uint32
-
-	// TODO
-	// endOffset uint8
 }
 
 func (a *archiveInfo) blockOffset(blockIndex int) int {

@@ -61,10 +61,7 @@ func Debug(compress, bitsWrite bool) {
 // 	    6 bits. Finally store the meaningful bits of the
 // 	    XORed value.
 
-// TODO: drop ...dataPoint
-//
-// 7 6 5 4 3 2 1 0
-func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written int, left []dataPoint, rotate bool) {
+func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written int, left []dataPoint, rotate bool) {
 	var bw BitsWriter
 	bw.buf = buf
 	bw.bitPos = a.cblock.lastByteBitPos
@@ -107,7 +104,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps ...dataPoint) (written 
 		fmt.Println(a.blockSize)
 	}
 
-	// TODO: return error if interval is not monotonically increasing
+	// TODO: return error if interval is not monotonically increasing?
 
 	for i, p := range ps {
 		if p.interval == 0 {
@@ -324,11 +321,6 @@ func mask(l int) uint {
 	return (1 << uint(l)) - 1
 }
 
-// 7 6 5 4 3 2 1 0
-//
-// 7 6 5 4 3 2 1 0
-//
-// 0 0 0 0 4 3 2 1
 func (bw *BitsWriter) Write(lenb int, data uint64) {
 	buf := make([]byte, 8)
 	switch {
@@ -574,10 +566,6 @@ func (br *BitsReader) trailingDebug() (start, end int, data []byte) {
 	return
 }
 
-// 7 6 5 4 3 2 1 0
-//
-// 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0
-
 func (br *BitsReader) Peek(c int) byte {
 	if br.current >= len(br.buf) {
 		return 0
@@ -641,7 +629,6 @@ func dumpBits(data ...uint64) string {
 	bw.bitPos = 7
 	var l uint64
 	for i := 0; i < len(data); i += 2 {
-		// reflect.ValueOf(data[i]).Uint()
 		bw.Write(int(data[i]), data[i+1])
 		l += data[i]
 	}
