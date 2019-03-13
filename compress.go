@@ -635,6 +635,7 @@ func dumpBits(data ...uint64) string {
 	return fmt.Sprintf("%08b len(%d) bit_pos(%d)", bw.buf[:bw.index+1], l, bw.bitPos)
 }
 
+// TODO: refactor err handling. there is a risk of open file leakage.
 func (whisper *Whisper) CompressTo(dstPath string) error {
 	var rets []*Retention
 	for _, arc := range whisper.archives {
@@ -662,6 +663,8 @@ func (whisper *Whisper) CompressTo(dstPath string) error {
 		sort.Slice(points, func(i, j int) bool {
 			return points[i].interval < points[j].interval
 		})
+
+		// filter null data points
 		var index int
 		for i := 0; i < len(points); i++ {
 			if points[i].interval > 0 {
@@ -671,11 +674,43 @@ func (whisper *Whisper) CompressTo(dstPath string) error {
 		}
 		points = points[:index]
 
+		// extract points that should be saved in archive.buffer
+		if dst.archives[i].hasBuffer() {
+			var foundBuffer int
+			var currentInterval int
+			var bufIndex int
+			var arc = dst.archives[i]
+			var lowerArc = dst.archives[i+1]
+			for i := len(points) - 1; i >= 0; i-- {
+				intv := lowerArc.Interval(points[i].interval)
+				if currentInterval == 0 || currentInterval != intv {
+					currentInterval = intv
+					foundBuffer++
+				}
+				if foundBuffer > 2 {
+					bufIndex = i + 1
+					break
+				}
+			}
+			if len(points[bufIndex:])*PointSize > dst.archives[i].bufferSize {
+				return fmt.Errorf("buffer points extraction incorrect (buffer_size: %d, poitns_to_store: %d)", dst.archives[i].bufferSize, len(points[bufIndex:]))
+			}
+
+			for i, p := range points[bufIndex:] {
+				copy(arc.buffer[i*PointSize:], p.Bytes())
+			}
+
+			points = points[:bufIndex]
+		}
+
 		if err := dst.archives[i].appendToBlockAndRotate(points); err != nil {
 			return err
 		}
 	}
 
+	if err := dst.WriteHeaderCompressed(); err != nil {
+		return err
+	}
 	if err := dst.Close(); err != nil {
 		return err
 	}

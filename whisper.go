@@ -1244,8 +1244,8 @@ func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize f
 
 	for i := len(whisper.archives) - 1; i >= 0; i-- {
 		archive := whisper.archives[i]
+		copy(nwhisper.archives[i].buffer, archive.buffer)
 		nwhisper.archives[i].stats = archive.stats
-		// archive.sortBlockRanges()
 
 		for _, block := range archive.getSortedBlockRanges() {
 			buf := make([]byte, archive.blockSize)
