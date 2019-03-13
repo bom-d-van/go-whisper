@@ -725,12 +725,6 @@ func (whisper *Whisper) WriteHeaderCompressed() (err error) {
   Close the whisper file
 */
 func (whisper *Whisper) Close() error {
-	if whisper.compressed {
-		if err := whisper.WriteHeaderCompressed(); err != nil {
-			return err
-		}
-	}
-
 	return whisper.file.Close()
 }
 
@@ -887,14 +881,6 @@ func (whisper *Whisper) UpdateMany(points []*TimeSeriesPoint) (err error) {
 		}
 	}()
 
-	// if !whisper.compressed && whisper.opts.Compressed {
-	// 	if err := whisper.convertToCompressedFormat(); err != nil {
-	// 		return fmt.Errorf("Fail to convert file to compressed format: %s", err)
-	// 		// } else {
-	// 		// 	whisper.readHeaderCompressed()
-	// 	}
-	// }
-
 	// sort the points, newest first
 	reversePoints(points)
 	sort.Stable(timeSeriesPointsNewestFirst{points})
@@ -922,6 +908,12 @@ func (whisper *Whisper) UpdateMany(points []*TimeSeriesPoint) (err error) {
 
 		if len(points) == 0 { // nothing left to do
 			break
+		}
+	}
+
+	if whisper.compressed {
+		if err := whisper.WriteHeaderCompressed(); err != nil {
+			return err
 		}
 	}
 
@@ -1262,6 +1254,9 @@ func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize f
 		}
 
 		nwhisper.archives[i].buffer = archive.buffer
+	}
+	if err := nwhisper.WriteHeaderCompressed(); err != nil {
+		return fmt.Errorf("extend: failed to writer header: %s", err)
 	}
 
 	whisper.Close()
