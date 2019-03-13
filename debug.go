@@ -2,7 +2,6 @@ package whisper
 
 import (
 	"fmt"
-	"time"
 )
 
 func (whisper *Whisper) CheckIntegrity() {
@@ -57,6 +56,10 @@ func (whisper *Whisper) Dump(all bool) {
 	fmt.Printf("points_per_block:          %d\n", whisper.pointsPerBlock)
 	fmt.Printf("avg_compressed_point_size: %f\n", whisper.avgCompressedPointSize)
 	fmt.Printf("crc32:                     %X\n", whisper.crc32)
+	fmt.Printf("archives:                  %d\n", len(whisper.archives))
+	for i, arc := range whisper.archives {
+		fmt.Printf("archives.%d.retention:      %s\n", i, arc.Retention)
+	}
 
 	for _, arc := range whisper.archives {
 		arc.dumpInfo()
@@ -70,7 +73,7 @@ func (whisper *Whisper) Dump(all bool) {
 		fmt.Println("")
 
 		if arc.hasBuffer() {
-			fmt.Printf("archive %s buffer[%d]:\n", time.Duration(int(time.Second)*arc.secondsPerPoint*arc.numberOfPoints), len(arc.buffer)/PointSize)
+			fmt.Printf("archive %s buffer[%d]:\n", arc.Retention, len(arc.buffer)/PointSize)
 			dps := unpackDataPoints(arc.buffer)
 			for i, p := range dps {
 				fmt.Printf("  % 4d %d: %f\n", i, p.interval, p.value)
@@ -78,7 +81,7 @@ func (whisper *Whisper) Dump(all bool) {
 		}
 
 		for _, block := range arc.blockRanges {
-			fmt.Printf("archive.%d %s block %d @%d\n", arc.secondsPerPoint, time.Duration(int(time.Second)*arc.secondsPerPoint*arc.numberOfPoints), block.index, arc.blockOffset(block.index))
+			fmt.Printf("archive %s block %d @%d\n", arc.Retention, block.index, arc.blockOffset(block.index))
 			if block.start == 0 {
 				fmt.Printf("    [empty]\n")
 				continue
@@ -110,8 +113,7 @@ func (whisper *Whisper) Dump(all bool) {
 // TODO: check if block ranges match data in blocks
 func (archive *archiveInfo) dumpInfo() {
 	fmt.Println("")
-	fmt.Printf("number_of_points:  %d %s\n", archive.numberOfPoints, time.Duration(int(time.Second)*archive.secondsPerPoint*archive.numberOfPoints))
-	fmt.Printf("seconds_per_point: %d %s\n", archive.secondsPerPoint, time.Duration(int(time.Second)*archive.secondsPerPoint))
+	fmt.Printf("retention:         %s\n", archive.Retention)
 	fmt.Printf("buffer_size:       %d\n", archive.bufferSize)
 	fmt.Printf("block_size:        %d\n", archive.blockSize)
 	fmt.Printf("point_size:        %f\n", archive.avgCompressedPointSize)

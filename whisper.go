@@ -39,6 +39,10 @@ const (
 	endOfBlockSize         = 5
 
 	DefaultPointsPerBlock = 7200
+
+	// using 2 buffer here to mitigate data points arriving at
+	// random orders causing early propagation
+	bufferCount = 2
 )
 
 const (
@@ -468,7 +472,7 @@ func (whisper *Whisper) initMetaInfo() {
 
 		prevArc := whisper.archives[i-1]
 		prevArc.next = arc
-		prevArc.bufferSize = arc.secondsPerPoint / prevArc.secondsPerPoint * PointSize * 2
+		prevArc.bufferSize = arc.secondsPerPoint / prevArc.secondsPerPoint * PointSize * bufferCount
 	}
 }
 
@@ -1201,9 +1205,8 @@ const (
 // 	0. test extend with UpdateMany api!
 // 	1. more complex logics of choosing which archive(s) should be resized [done]
 // 	2. add stats [done]
+// 	3. add a unit test
 func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize float32, newBlockCount int) error {
-	// log.Printf("extend %s point: %f -> %f block: %d -> %d\n", time.Duration(archive.secondsPerPoint)*time.Second, archive.avgCompressedPointSize, newSize, archive.blockCount, newBlockCount)
-
 	var rets []*Retention
 	for _, arc := range whisper.archives {
 		ret := &Retention{
@@ -1699,6 +1702,24 @@ func (retention *Retention) SecondsPerPoint() int {
 
 func (retention *Retention) NumberOfPoints() int {
 	return retention.numberOfPoints
+}
+
+func (r Retention) String() string {
+	toStr := func(v int) string {
+		switch {
+		case v >= 365*24*60*60:
+			return fmt.Sprintf("%dy", v/(365*24*60*60))
+		case v >= 24*60*60:
+			return fmt.Sprintf("%dd", v/(24*60*60))
+		case v >= 60*60:
+			return fmt.Sprintf("%dh", v/(60*60))
+		case v >= 60:
+			return fmt.Sprintf("%dm", v/(60))
+		default:
+			return fmt.Sprintf("%ds", v)
+		}
+	}
+	return fmt.Sprintf("%s:%s", toStr(r.secondsPerPoint), toStr(r.secondsPerPoint*r.numberOfPoints))
 }
 
 func NewRetention(secondsPerPoint, numberOfPoints int) Retention {
