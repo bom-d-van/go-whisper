@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -22,6 +23,10 @@ import (
 	whisper "github.com/go-graphite/go-whisper"
 )
 
+func init() {
+	rand.Seed(time.Now().Unix())
+}
+
 func main() {
 	var storeDir = flag.String("store", "/var/lib/carbon/whisper", "path to whisper data files")
 	// var targetFile = flag.String("file", "", "only convert specified file")
@@ -30,6 +35,8 @@ func main() {
 	// var stopOnErrors = flag.Int("error", runtime.NumCPU(), "stop conversion when errors reach threshold")
 	var help = flag.Bool("help", false, "show help message")
 	var debug = flag.Bool("debug", false, "show debug info")
+	var force = flag.Bool("force", false, "ignore records progress.db and convert the files")
+	var oneoff = flag.Bool("one-off", false, "only scan once")
 
 	flag.BoolVar(help, "h", false, "show help message")
 	flag.Parse()
@@ -42,6 +49,10 @@ func main() {
 		panic(err)
 	}
 
+	if *oneoff {
+		*rate = 65536
+	}
+
 	var progressDB = *homdDir + "/progress.db"
 	var pidFile = *homdDir + "/pid"
 	var taskc = make(chan string, *rate)
@@ -49,6 +60,7 @@ func main() {
 	var convertingCount int64
 	var progressc = make(chan string, *rate)
 	var exitc = make(chan struct{})
+	var shutdownc = make(chan os.Signal, 1)
 
 	if err := ioutil.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
 		fmt.Printf("main: failed to save pid: %s\n", err)
@@ -58,15 +70,22 @@ func main() {
 	go logProgress(progressDB, progressc)
 	go func() {
 		for {
-			scanAndDispatch(*storeDir, progressDB, taskc)
+			scanAndDispatch(*storeDir, progressDB, taskc, *force)
+
+			if *oneoff {
+				for len(taskc) > 0 {
+					time.Sleep(time.Millisecond * time.Duration(rand.Intn(1000)))
+				}
+				close(shutdownc)
+			}
+
 			time.Sleep(time.Minute)
 		}
 	}()
-	onExit(&convertingCount, &convertingFiles, progressc, taskc, exitc)
+	onExit(&convertingCount, &convertingFiles, progressc, taskc, exitc, shutdownc)
 }
 
-func onExit(convertingCount *int64, convertingFiles *sync.Map, progressc chan string, taskc chan string, exitc chan struct{}) {
-	shutdownc := make(chan os.Signal, 1)
+func onExit(convertingCount *int64, convertingFiles *sync.Map, progressc chan string, taskc chan string, exitc chan struct{}, shutdownc chan os.Signal) {
 	signal.Notify(shutdownc, os.Interrupt)
 
 	<-shutdownc
@@ -80,11 +99,11 @@ func onExit(convertingCount *int64, convertingFiles *sync.Map, progressc chan st
 				return true
 			})
 
-			time.Sleep(time.Second)
+			time.Sleep(time.Second * time.Duration(rand.Intn(10)))
 			continue
 		}
-		close(progressc)
 		time.Sleep(time.Second)
+		// close(progressc)
 		os.Exit(0)
 	}
 }
@@ -156,9 +175,9 @@ func logProgress(progressDB string, progressc chan string) {
 		}
 	}
 
-	if err := logf.Close(); err != nil {
-		fmt.Printf("log: failed to close db: %s\n", err)
-	}
+	// if err := logf.Close(); err != nil {
+	// 	fmt.Printf("log: failed to close db: %s\n", err)
+	// }
 }
 
 func convert(path string, progressc chan string, convertingCount *int64, convertingFiles *sync.Map, debugf bool) error {
@@ -241,7 +260,7 @@ func convert(path string, progressc chan string, convertingCount *int64, convert
 	return nil
 }
 
-func scanAndDispatch(storeDir, progressDB string, taskc chan string) {
+func scanAndDispatch(storeDir, progressDB string, taskc chan string, force bool) {
 	fmt.Printf("sd: start new conversion cycle\n")
 	files, dur, err := scan(storeDir)
 	if err != nil {
@@ -252,7 +271,7 @@ func scanAndDispatch(storeDir, progressDB string, taskc chan string) {
 	cwsps, err := readProgress(progressDB)
 	var tasks []string
 	for _, file := range files {
-		if _, ok := cwsps[file]; ok {
+		if _, ok := cwsps[file]; ok && !force {
 			continue
 		}
 		tasks = append(tasks, file)
@@ -268,6 +287,14 @@ func scanAndDispatch(storeDir, progressDB string, taskc chan string) {
 }
 
 func scan(dir string) (files []string, dur time.Duration, err error) {
+	if stat, e := os.Stat(dir); e != nil {
+		err = e
+		return
+	} else if !stat.IsDir() {
+		files = append(files, dir)
+		return
+	}
+
 	start := time.Now()
 	err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
