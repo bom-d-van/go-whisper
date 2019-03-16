@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	whisper "github.com/go-graphite/go-whisper"
@@ -87,6 +88,8 @@ func main() {
 
 func onExit(convertingCount *int64, convertingFiles *sync.Map, progressc chan string, taskc chan string, exitc chan struct{}, shutdownc chan os.Signal) {
 	signal.Notify(shutdownc, os.Interrupt)
+	signal.Notify(shutdownc, syscall.SIGTERM)
+	signal.Notify(shutdownc, syscall.SIGUSR2)
 
 	<-shutdownc
 	close(exitc)
@@ -119,7 +122,7 @@ func schedule(rate int, taskc chan string, db string, progressc chan string, con
 		select {
 		case metric = <-taskc:
 		case <-exitc:
-			fmt.Printf("schedule: stopped")
+			fmt.Printf("schedule: stopped\n")
 			return
 		}
 		atomic.AddInt64(convertingCount, 1)
@@ -181,6 +184,11 @@ func logProgress(progressDB string, progressc chan string) {
 }
 
 func convert(path string, progressc chan string, convertingCount *int64, convertingFiles *sync.Map, debugf bool) error {
+	defer func() {
+		atomic.AddInt64(convertingCount, -1)
+		convertingFiles.Delete(path)
+	}()
+
 	if debugf {
 		fmt.Printf("convert: handling %s\n", path)
 	}
@@ -189,11 +197,6 @@ func convert(path string, progressc chan string, convertingCount *int64, convert
 	if err != nil {
 		return fmt.Errorf("convert: failed to open %s: %s", path, err)
 	}
-
-	defer func() {
-		atomic.AddInt64(convertingCount, -1)
-		convertingFiles.Delete(path)
-	}()
 
 	if db.IsCompressed() {
 		if debugf {
@@ -277,7 +280,7 @@ func scanAndDispatch(storeDir, progressDB string, taskc chan string, force bool)
 		tasks = append(tasks, file)
 	}
 
-	fmt.Printf("sd: uncompressed %d total %d pct %.2f\n", len(tasks), len(files), float64(len(tasks))/float64(len(files)))
+	fmt.Printf("sd: uncompressed %d total %d pct %.2f%%\n", len(tasks), len(files), float64(len(tasks))/float64(len(files))*100)
 	start := time.Now()
 	for _, task := range tasks {
 		taskc <- task
