@@ -71,7 +71,9 @@ func main() {
 	go logProgress(progressDB, progressc)
 	go func() {
 		for {
-			scanAndDispatch(*storeDir, progressDB, taskc, *force)
+			if err := scanAndDispatch(*storeDir, progressDB, taskc); err != nil {
+				fmt.Printf("error: %s", err)
+			}
 
 			if *oneoff {
 				for len(taskc) > 0 {
@@ -130,7 +132,7 @@ func schedule(rate int, taskc chan string, db string, progressc chan string, con
 		go func() {
 			err := convert(metric, progressc, convertingCount, convertingFiles, debug)
 			if err != nil {
-				fmt.Println(err)
+				fmt.Printf("error: %s", err)
 			}
 		}()
 	}
@@ -263,11 +265,11 @@ func convert(path string, progressc chan string, convertingCount *int64, convert
 	return nil
 }
 
-func scanAndDispatch(storeDir, progressDB string, taskc chan string, force bool) {
+func scanAndDispatch(storeDir, progressDB string, taskc chan string) error {
 	fmt.Printf("sd: start new conversion cycle\n")
 	files, dur, err := scan(storeDir)
 	if err != nil {
-		return
+		return err
 	}
 	fmt.Printf("sd: scan %d files took %s\n", len(files), dur)
 
