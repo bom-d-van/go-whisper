@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,13 +20,27 @@ func init() {
 }
 
 func main() {
-	now := flag.Int64("now", time.Now().Unix(), "specify the current time")
+	now := flag.Int("now", int(time.Now().Unix()), "specify the current time")
 	ignoreBuffer := flag.Bool("ignore-buffer", false, "ignore points in buffer that haven't been propagated")
+	quarantinesRaw := flag.String("quarantines", "2019-02-21,2019-02-22", "ignore data started from this point")
 	flag.Parse()
 
-	whisper.Now = func() time.Time {
-		return time.Unix(*now, 0)
+	var quarantines [][2]int
+	for _, q := range strings.Split(*quarantinesRaw, ";") {
+		var quarantine [2]int
+		for i, t := range strings.Split(q, ",") {
+			tim, err := time.Parse("2006-01-02", t)
+			if err != nil {
+				panic(err)
+			}
+			quarantine[i] = int(tim.Unix())
+		}
+		quarantines = append(quarantines, quarantine)
 	}
+
+	// whisper.Now = func() time.Time {
+	// 	return time.Unix(*now, 0)
+	// }
 
 	file1 := flag.Args()[0]
 	file2 := flag.Args()[1]
@@ -40,14 +55,17 @@ func main() {
 	}
 
 	var bad bool
+	// var sums []string
 	for index, ret := range db1.Retentions() {
-		now := int(whisper.Now().Unix())
-		from := now - ret.MaxRetention()
-		until := now
+		// now := int(whisper.Now().Unix())
+		// from := now - ret.MaxRetention()
+		// until := now
+		from := *now - ret.MaxRetention() + ret.SecondsPerPoint()*60
+		until := *now - 3600*8
 
+		fmt.Printf("from = %+v\n", from)
+		fmt.Printf("until = %+v\n", until)
 		fmt.Println(time.Second*time.Duration(ret.MaxRetention()), ret.SecondsPerPoint())
-		log.Printf("from = %+v\n", from)
-		log.Printf("until = %+v\n", until)
 
 		var dps1, dps2 *whisper.TimeSeries
 		var wg sync.WaitGroup
@@ -75,16 +93,37 @@ func main() {
 
 		wg.Wait()
 
-		if *ignoreBuffer && index > 0 {
-			if !db1.IsCompressed() {
+		if *ignoreBuffer && index < len(db1.Retentions())-1 {
+			{
 				vals := dps1.Values()
 				vals[len(vals)-1] = math.NaN()
 				vals[len(vals)-2] = math.NaN()
 			}
-			if !db2.IsCompressed() {
+			{
 				vals := dps2.Values()
 				vals[len(vals)-1] = math.NaN()
 				vals[len(vals)-2] = math.NaN()
+			}
+		}
+
+		for _, quarantine := range quarantines {
+			qfrom := quarantine[0]
+			quntil := quarantine[1]
+			if from <= qfrom && qfrom <= until {
+				qfromIndex := (qfrom - from) / ret.SecondsPerPoint()
+				quntilIndex := (quntil - from) / ret.SecondsPerPoint()
+				{
+					vals := dps1.Values()
+					for i := qfromIndex; i <= quntilIndex && i < len(vals); i++ {
+						vals[i] = math.NaN()
+					}
+				}
+				{
+					vals := dps2.Values()
+					for i := qfromIndex; i <= quntilIndex && i < len(vals); i++ {
+						vals[i] = math.NaN()
+					}
+				}
 			}
 		}
 
