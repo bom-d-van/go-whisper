@@ -15,6 +15,8 @@ import (
 	"github.com/kr/pretty"
 )
 
+// not really tests here, just for easy debugging/development.
+
 func TestBitWriter(t *testing.T) {
 	var bw BitsWriter
 	bw.buf = make([]byte, 8)
