@@ -92,16 +92,10 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written i
 		a.blockRanges[a.cblock.index].end = a.cblock.pn1.interval
 		a.blockRanges[a.cblock.index].count = a.cblock.count
 		a.blockRanges[a.cblock.index].crc32 = a.cblock.crc32
-
-		if debugCompress {
-			log.Printf("bw.buf[bw.index-10:bw.index+10] = %08b\n", bw.buf[bw.index-10:bw.index+10])
-		}
 	}()
 
 	if debugCompress {
-		fmt.Println(bw.index)
-		fmt.Println(a.cblock.lastByteOffset)
-		fmt.Println(a.blockSize)
+		fmt.Printf("appendPointsToBlock(%s): cblock.index=%d bw.index = %d lastByteOffset = %d blockSize = %d\n", a.Retention, a.cblock.index, bw.index, a.cblock.lastByteOffset, a.blockSize)
 	}
 
 	// TODO: return error if interval is not monotonically increasing?
@@ -126,7 +120,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written i
 
 			if debugCompress {
 				fmt.Printf("begin\n")
-				fmt.Printf("%d: %f\n", p.interval, p.value)
+				fmt.Printf("%d: %v\n", p.interval, p.value)
 			}
 
 			continue
@@ -142,60 +136,57 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written i
 
 		// TODO: use two's complement instead to extend delta range?
 		if delta == 0 {
-			bw.Write(1, 0)
-
 			if debugCompress {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(1, 0))
 			}
 
+			bw.Write(1, 0)
 			a.stats.interval.len1++
 		} else if -63 < delta && delta < 64 {
-			bw.Write(2, 2)
 			if delta < 0 {
 				delta *= -1
 				delta |= 64
 			}
-			bw.Write(7, uint64(delta))
 
 			if debugCompress {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(2, 2, 7, uint64(delta)))
 			}
 
+			bw.Write(2, 2)
+			bw.Write(7, uint64(delta))
 			a.stats.interval.len9++
 		} else if -255 < delta && delta < 256 {
-			bw.Write(3, 6)
 			if delta < 0 {
 				delta *= -1
 				delta |= 256
 			}
-			bw.Write(9, uint64(delta))
-
 			if debugCompress {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(3, 6, 9, uint64(delta)))
 			}
 
+			bw.Write(3, 6)
+			bw.Write(9, uint64(delta))
 			a.stats.interval.len12++
 		} else if -2047 < delta && delta < 2048 {
-			bw.Write(4, 14)
 			if delta < 0 {
 				delta *= -1
 				delta |= 2048
 			}
-			bw.Write(12, uint64(delta))
 
 			if debugCompress {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(4, 14, 12, uint64(delta)))
 			}
 
+			bw.Write(4, 14)
+			bw.Write(12, uint64(delta))
 			a.stats.interval.len16++
 		} else {
-			bw.Write(4, 15)
-			bw.Write(32, uint64(p.interval))
-
 			if debugCompress {
 				fmt.Printf("\tbuf.index = %d/%d delta = %d: %0s\n", bw.bitPos, bw.index, delta, dumpBits(4, 15, 32, uint64(delta)))
 			}
 
+			bw.Write(4, 15)
+			bw.Write(32, uint64(p.interval))
 			a.stats.interval.len36++
 		}
 
@@ -281,7 +272,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written i
 			left = ps[i:]
 
 			if debugCompress {
-				fmt.Printf("buffer is full, write aborted\n")
+				fmt.Printf("buffer is full, write aborted: oldBwIndex = %d oldBwLastByte = %08x\n", oldBwIndex, oldBwLastByte)
 			}
 
 			break
@@ -292,15 +283,14 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written i
 		a.cblock.count++
 
 		if debugCompress {
-			start := bw.index - 8
-			end := bw.index + 8
-			if start < 0 {
-				start = 0
-			}
+			start := oldBwIndex
+			end := bw.index + 2
 			if end > len(bw.buf) {
 				end = len(bw.buf) - 1
 			}
-			fmt.Printf("%d/%d/%d: %08b\n", bw.index, start, end, bw.buf[start:end])
+			eob := bw.index + a.cblock.lastByteOffset
+			size := eob - a.blockOffset(a.cblock.index)
+			fmt.Printf("buf[%d-%d](index=%d len=%d eob=%d size=%d/%d): %08b\n", start, end, bw.index, len(bw.buf), eob, size, a.blockSize, bw.buf[start:end])
 		}
 	}
 
@@ -485,7 +475,7 @@ readloop:
 			p.value = pn1.value
 
 			if debugCompress {
-				fmt.Printf("\tsame as previous value %016x (%f)\n", math.Float64bits(pn1.value), p.value)
+				fmt.Printf("\tsame as previous value %016x (%v)\n", math.Float64bits(pn1.value), p.value)
 			}
 		case br.Peek(2) == 2: // 10
 			br.Read(2)
@@ -497,7 +487,7 @@ readloop:
 
 			if debugCompress {
 				fmt.Printf("\tsame-length meaningful block\n")
-				fmt.Printf("\txor: %016x val: %016x (%f)\n", val<<uint(tz), math.Float64bits(p.value), p.value)
+				fmt.Printf("\txor: %016x val: %016x (%v)\n", val<<uint(tz), math.Float64bits(p.value), p.value)
 			}
 		case br.Peek(2) == 3: // 11
 			br.Read(2)
@@ -515,7 +505,7 @@ readloop:
 
 			if debugCompress {
 				fmt.Printf("\tvaried-length meaningful block\n")
-				fmt.Printf("\txor: %016x mlen: %d val: %016x (%f)\n", xor, mlen, math.Float64bits(p.value), p.value)
+				fmt.Printf("\txor: %016x mlen: %d val: %016x (%v)\n", xor, mlen, math.Float64bits(p.value), p.value)
 			}
 		}
 
@@ -632,7 +622,7 @@ func dumpBits(data ...uint64) string {
 		bw.Write(int(data[i]), data[i+1])
 		l += data[i]
 	}
-	return fmt.Sprintf("%08b len(%d) bit_pos(%d)", bw.buf[:bw.index+1], l, bw.bitPos)
+	return fmt.Sprintf("%08b len(%d) end_bit_pos(%d)", bw.buf[:bw.index+1], l, bw.bitPos)
 }
 
 // TODO: refactor err handling. there is a risk of open file leakage.
