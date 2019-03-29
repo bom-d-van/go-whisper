@@ -10,6 +10,8 @@ import (
 )
 
 func main() {
+	header := flag.Bool("header", false, "show only file header")
+	debug := flag.Bool("debug", false, "show decompression debug info")
 	noLess := flag.Bool("no-less", false, "Don't use less, print everything to stdout.")
 	flag.Parse()
 
@@ -27,7 +29,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	db.Dump(true)
+	db.Dump(!*header, *debug)
 
 	if !*noLess {
 		if _, err := os.Stdout.Seek(0, 0); err != nil {
