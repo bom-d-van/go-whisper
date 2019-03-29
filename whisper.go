@@ -989,16 +989,16 @@ func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points
 	bufferUnitPointsCount := archive.next.secondsPerPoint / archive.secondsPerPoint
 	for aindex := 0; aindex < len(alignedPoints); {
 		dp := alignedPoints[aindex]
-
 		bpBaseInterval := archive.AggregateInterval(dp.interval)
 
-		// current implementation expects data points to monotonically
+		// NOTE: current implementation expects data points to be monotonically
 		// increasing in time
 		if minInterval != 0 && bpBaseInterval < minInterval {
 			archive.stats.discard.oldInterval++
 			continue
 		}
 
+		// check if buffer is full
 		if baseIntervalsPerUnit[currentUnit] == 0 || baseIntervalsPerUnit[currentUnit] == bpBaseInterval {
 			aindex++
 			baseIntervalsPerUnit[currentUnit] = bpBaseInterval
@@ -1108,18 +1108,19 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		if end >= len(blockBuffer) {
 			end = len(blockBuffer) - 1
 		}
-
 		if err := whisper.fileWriteAt(blockBuffer[:end], int64(archive.cblock.lastByteOffset-size+1)); err != nil {
 			return err
-		}
-
-		for i := 0; i < len(blockBuffer); i++ {
-			blockBuffer[i] = 0
 		}
 
 		if len(left) == 0 {
 			break
 		}
+
+		// reset block
+		for i := 0; i < len(blockBuffer); i++ {
+			blockBuffer[i] = 0
+		}
+
 		dps = left
 
 		if !rotate {
@@ -1164,8 +1165,7 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 
 					archive.stats.extend.pointSize++
 				} else {
-					// TODO: no need to extend blocks for online conversion if all now-retention points are already saved
-
+					// TODO: no need to extend blocks for online conversion if all now-retention points are already saved?
 					newBlockCount = archive.blockCount + 1
 					etType = etBlock
 
@@ -1176,13 +1176,15 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 					return err
 				}
 
-				for _, narchive := range whisper.archives {
-					if narchive.secondsPerPoint == archive.secondsPerPoint {
-						*archive = *narchive
-						return narchive.appendToBlockAndRotate(left)
-					}
-				}
-				return nil
+				// for _, narchive := range whisper.archives {
+				// 	if narchive.secondsPerPoint == archive.secondsPerPoint {
+				// 		*archive = *narchive // important
+				// 		return narchive.appendToBlockAndRotate(left)
+				// 	}
+				// }
+				// return nil
+
+				return archive.appendToBlockAndRotate(left)
 			}
 		}
 
@@ -1262,6 +1264,7 @@ func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize f
 		return fmt.Errorf("extend: failed to writer header: %s", err)
 	}
 
+	// TODO: better error handling
 	whisper.Close()
 	nwhisper.file.Close()
 	if err := os.Rename(filename+".extend", filename); err != nil {
@@ -1269,10 +1272,15 @@ func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize f
 	}
 
 	// important
+	for i, arc := range whisper.archives {
+		*arc = *nwhisper.archives[i]
+	}
+
+	// important
 	nwhisper.file, err = os.OpenFile(filename, os.O_RDWR, 0666)
 	*whisper = *nwhisper
 	for _, arc := range whisper.archives {
-		arc.whisper = whisper
+		arc.whisper = whisper // important!
 	}
 	whisper.Extended = true
 
@@ -1752,11 +1760,10 @@ func (r retentionsByPrecision) Less(i, j int) bool {
   whisper file.
 */
 type archiveInfo struct {
-	next *archiveInfo
-
 	Retention `meta:"size:8"`
 	offset    int `meta:"size:4"`
 
+	next    *archiveInfo
 	whisper *Whisper
 
 	// reason:
