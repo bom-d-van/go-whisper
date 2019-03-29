@@ -546,9 +546,11 @@ func TestReplayFile(t *testing.T) {
 		panic(err)
 	}
 
+	Now = func() time.Time { return time.Unix(1553545592, 0) }
+	defer func() { Now = func() time.Time { return time.Now() } }()
+
 	fpath := fmt.Sprintf("replay.%d.cwsp", time.Now().Unix())
 	os.Remove(fpath)
-	fmt.Fprintln(os.Stderr, "go run cmd/dump.go", fpath, "| less")
 	cwhisper, err := CreateWithOptions(
 		fpath,
 		[]*Retention{
@@ -565,6 +567,7 @@ func TestReplayFile(t *testing.T) {
 	}
 
 	for i := 0; i < len(ps); i += 300 {
+		// end := i + rand.Intn(300) + 1
 		end := i + 300
 		if end > len(ps) {
 			end = len(ps)
@@ -572,10 +575,41 @@ func TestReplayFile(t *testing.T) {
 		if err := cwhisper.UpdateMany(ps[i:end]); err != nil {
 			panic(err)
 		}
+		// i = end
 	}
 	if err := cwhisper.Close(); err != nil {
 		panic(err)
 	}
+
+	psm := map[int]float64{}
+	for _, p := range ps {
+		psm[p.Time] = p.Value
+	}
+	cwhisper, err = OpenWithOptions(fpath, &Options{})
+	if err != nil {
+		panic(err)
+	}
+	archive := cwhisper.archives[0]
+	var readCount int
+	for _, block := range archive.getSortedBlockRanges() {
+		buf := make([]byte, archive.blockSize)
+		if err := cwhisper.fileReadAt(buf, int64(archive.blockOffset(block.index))); err != nil {
+			t.Errorf("blocks[%d].file.read: %s", block.index, err)
+		}
+		dst, _, err := archive.readFromBlock(buf, []dataPoint{}, block.start, block.end)
+		if err != nil {
+			t.Errorf("blocks[%d].read: %s", block.index, err)
+		}
+		for _, p := range dst {
+			if psm[p.interval] != p.value {
+				t.Errorf("block[%d][%d] = %v != %v", block.index, p.interval, p.value, psm[p.interval])
+			}
+			readCount++
+			delete(psm, p.interval)
+		}
+	}
+	fmt.Println("len(psm) =", len(psm))
+	fmt.Println("readCount =", readCount)
 }
 
 func BenchmarkReadCompressed(b *testing.B) {
