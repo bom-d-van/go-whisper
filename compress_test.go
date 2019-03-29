@@ -608,6 +608,8 @@ func TestReplayFile(t *testing.T) {
 			delete(psm, p.interval)
 		}
 	}
+
+	// TODO: investigate why there are 17000+ points left and improve
 	fmt.Println("len(psm) =", len(psm))
 	fmt.Println("readCount =", readCount)
 }

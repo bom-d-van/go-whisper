@@ -443,6 +443,10 @@ readloop:
 			break readloop
 		case 32:
 			if delta == 0 {
+				if debugCompress {
+					fmt.Println("\tended by EOB")
+				}
+
 				exitByEOB = true
 				break readloop
 			}
@@ -510,6 +514,9 @@ readloop:
 		}
 
 		if br.badRead {
+			if debugCompress {
+				fmt.Printf("ended by badRead\n")
+			}
 			break
 		}
 
@@ -520,6 +527,9 @@ readloop:
 			dst = append(dst, p)
 		}
 		if p.interval >= end {
+			if debugCompress {
+				fmt.Printf("ended by hitting end interval\n")
+			}
 			break
 		}
 	}
@@ -701,6 +711,9 @@ func (whisper *Whisper) CompressTo(dstPath string) error {
 	if err := dst.WriteHeaderCompressed(); err != nil {
 		return err
 	}
+
+	// TODO: check if compression is done correctly
+
 	if err := dst.Close(); err != nil {
 		return err
 	}
