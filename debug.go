@@ -46,7 +46,9 @@ func (whisper *Whisper) CheckIntegrity() {
 	}
 }
 
-func (whisper *Whisper) Dump(all bool) {
+func (whisper *Whisper) Dump(all, showDecompressionInfo bool) {
+	debugCompress = showDecompressionInfo
+
 	// fmt.Printf("is_compressed:             %t\n", whisper.compressed)
 	fmt.Printf("compressed:                %t\n", whisper.compressed)
 	fmt.Printf("aggregation_method:        %d\n", whisper.aggregationMethod)
@@ -104,7 +106,7 @@ func (whisper *Whisper) Dump(all bool) {
 
 			for i, p := range dps {
 				// continue
-				fmt.Printf("  % 4d %d: %f\n", i, p.interval, p.value)
+				fmt.Printf("  % 4d %d: %v\n", i, p.interval, p.value)
 			}
 		}
 	}
