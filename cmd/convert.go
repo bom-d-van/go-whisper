@@ -34,11 +34,11 @@ func main() {
 	var homdDir = flag.String("home", "/var/lib/carbon/convert", "home directory of convert")
 	var rate = flag.Int("rate", runtime.NumCPU(), "count of concurrent conversion per second")
 	// var stopOnErrors = flag.Int("error", runtime.NumCPU(), "stop conversion when errors reach threshold")
-	var help = flag.Bool("help", false, "show help message")
 	var debug = flag.Bool("debug", false, "show debug info")
 	var force = flag.Bool("force", false, "ignore records progress.db and convert the files")
 	var oneoff = flag.Bool("one-off", false, "only scan once")
-
+	var keepOriginal = flag.Bool("keep-original", false, "keep both the original and compressed whisper files")
+	var help = flag.Bool("help", false, "show help message")
 	flag.BoolVar(help, "h", false, "show help message")
 	flag.Parse()
 	if *help {
@@ -67,11 +67,11 @@ func main() {
 		fmt.Printf("main: failed to save pid: %s\n", err)
 	}
 
-	go schedule(*rate, taskc, progressDB, progressc, &convertingCount, &convertingFiles, exitc, *debug)
+	go schedule(*rate, taskc, progressDB, progressc, &convertingCount, &convertingFiles, exitc, *debug, *keepOriginal)
 	go logProgress(progressDB, progressc)
 	go func() {
 		for {
-			if err := scanAndDispatch(*storeDir, progressDB, taskc); err != nil {
+			if err := scanAndDispatch(*storeDir, progressDB, taskc, *force); err != nil {
 				fmt.Printf("error: %s", err)
 			}
 
@@ -79,10 +79,11 @@ func main() {
 				for len(taskc) > 0 {
 					time.Sleep(time.Millisecond * time.Duration(rand.Intn(1000)))
 				}
+				time.Sleep(time.Second * 3)
 				close(shutdownc)
 			}
 
-			time.Sleep(time.Minute)
+			time.Sleep(time.Hour)
 		}
 	}()
 	onExit(&convertingCount, &convertingFiles, progressc, taskc, exitc, shutdownc)
@@ -95,7 +96,7 @@ func onExit(convertingCount *int64, convertingFiles *sync.Map, progressc chan st
 
 	<-shutdownc
 	close(exitc)
-	fmt.Printf("exit: program shutting down\n")
+	fmt.Printf("exit: enter shutting down process\n")
 	for {
 		if c := atomic.LoadInt64(convertingCount); c > 0 {
 			fmt.Printf("exit: %d files are still converting\n", c)
@@ -107,13 +108,18 @@ func onExit(convertingCount *int64, convertingFiles *sync.Map, progressc chan st
 			time.Sleep(time.Second * time.Duration(rand.Intn(10)))
 			continue
 		}
-		time.Sleep(time.Second)
+		if len(progressc) > 0 {
+			fmt.Printf("exit: flushing progress records\n")
+			continue
+		}
+		fmt.Printf("exit: progrem shutting down in 3 seconds\n")
+		time.Sleep(time.Second * 3)
 		// close(progressc)
 		os.Exit(0)
 	}
 }
 
-func schedule(rate int, taskc chan string, db string, progressc chan string, convertingCount *int64, convertingFiles *sync.Map, exitc chan struct{}, debug bool) {
+func schedule(rate int, taskc chan string, db string, progressc chan string, convertingCount *int64, convertingFiles *sync.Map, exitc chan struct{}, debug, keepOriginal bool) {
 	ticker := time.NewTicker(time.Second / time.Duration(rate))
 	for range ticker.C {
 		if atomic.LoadInt64(convertingCount) >= int64(rate) {
@@ -130,7 +136,7 @@ func schedule(rate int, taskc chan string, db string, progressc chan string, con
 		atomic.AddInt64(convertingCount, 1)
 		convertingFiles.Store(metric, struct{}{})
 		go func() {
-			err := convert(metric, progressc, convertingCount, convertingFiles, debug)
+			err := convert(metric, progressc, convertingCount, convertingFiles, debug, keepOriginal)
 			if err != nil {
 				fmt.Printf("error: %s", err)
 			}
@@ -185,7 +191,7 @@ func logProgress(progressDB string, progressc chan string) {
 	// }
 }
 
-func convert(path string, progressc chan string, convertingCount *int64, convertingFiles *sync.Map, debugf bool) error {
+func convert(path string, progressc chan string, convertingCount *int64, convertingFiles *sync.Map, debugf, keepOriginal bool) error {
 	defer func() {
 		atomic.AddInt64(convertingCount, -1)
 		convertingFiles.Delete(path)
@@ -235,6 +241,11 @@ func convert(path string, progressc chan string, convertingCount *int64, convert
 	if err := db.CompressTo(tmpPath); err != nil {
 		return fmt.Errorf("convert: failed to compress %s: %s", path, err)
 	}
+
+	if keepOriginal {
+		return nil
+	}
+
 	defer os.Remove(tmpPath)
 
 	cfile, err := os.Open(tmpPath)
@@ -265,7 +276,7 @@ func convert(path string, progressc chan string, convertingCount *int64, convert
 	return nil
 }
 
-func scanAndDispatch(storeDir, progressDB string, taskc chan string) error {
+func scanAndDispatch(storeDir, progressDB string, taskc chan string, force bool) error {
 	fmt.Printf("sd: start new conversion cycle\n")
 	files, dur, err := scan(storeDir)
 	if err != nil {
@@ -289,6 +300,7 @@ func scanAndDispatch(storeDir, progressDB string, taskc chan string) error {
 	}
 
 	fmt.Printf("sd: done took %s\n", time.Now().Sub(start))
+	return nil
 }
 
 func scan(dir string) (files []string, dur time.Duration, err error) {
