@@ -64,8 +64,25 @@ const (
 	Min
 )
 
+func (am AggregationMethod) String() string {
+	switch am {
+	case Average:
+		return "average"
+	case Sum:
+		return "sum"
+	case Last:
+		return "last"
+	case Max:
+		return "max"
+	case Min:
+		return "min"
+	}
+	return fmt.Sprintf("%d", am)
+}
+
 var (
 	compressedMagicString = []byte("whisper_compressed") // len = 18
+	debugExtend           bool
 )
 
 type Options struct {
@@ -272,11 +289,12 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 
 		if whisper.compressed {
 			archive.cblock.lastByteBitPos = 7
-			if retention.numberOfPoints > whisper.pointsPerBlock {
-				archive.blockSize = int(float64(whisper.pointsPerBlock)*float64(archive.avgCompressedPointSize)) + endOfBlockSize
-			} else {
-				archive.blockSize = int(float64(retention.numberOfPoints)*float64(archive.avgCompressedPointSize)) + endOfBlockSize
-			}
+			archive.blockSize = int(math.Ceil(float64(whisper.pointsPerBlock)*float64(archive.avgCompressedPointSize))) + endOfBlockSize
+			// if retention.numberOfPoints > whisper.pointsPerBlock {
+			// 	archive.blockSize = int(float64(whisper.pointsPerBlock)*float64(archive.avgCompressedPointSize)) + endOfBlockSize
+			// } else {
+			// 	archive.blockSize = int(float64(retention.numberOfPoints)*float64(archive.avgCompressedPointSize)) + endOfBlockSize
+			// }
 
 			archive.blockRanges = make([]blockRange, archive.blockCount)
 
@@ -1122,7 +1140,6 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		}
 
 		dps = left
-
 		if !rotate {
 			continue
 		}
@@ -1132,39 +1149,50 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		nblock.lastByteBitPos = 7
 		nblock.lastByteOffset = archive.blockOffset(nblock.index)
 
-		// whole-archive rotation detected
+		// check if it's a whole-archive rotation
 		isFull := true
-		var max, min int
+		// var max, min int
+		var totalPoints int
 		var overriddenEnd int
 		for _, b := range archive.blockRanges {
 			isFull = isFull && b.start > 0 && b.end > 0
-			if min == 0 || min > b.start {
-				min = b.start
-			}
-			if max == 0 || max < b.end {
-				max = b.end
-			}
+			// if min == 0 || min > b.start {
+			// 	min = b.start
+			// }
+			// if max == 0 || max < b.end {
+			// 	max = b.end
+			// }
+			totalPoints += b.count
 			if b.index == nblock.index {
 				overriddenEnd = b.end
 			}
 		}
 		if isFull {
-			var notEnoughBlocks bool
+			var archiveTooSmall bool
 			if len(archive.blockRanges) > 1 {
 				lowerbound := int(Now().Unix()) - archive.MaxRetention()
-				notEnoughBlocks = lowerbound <= overriddenEnd
+				archiveTooSmall = lowerbound <= overriddenEnd
 			}
-			total := (max - min) / archive.secondsPerPoint
-			pointSizeTooSmall := total < archive.numberOfPoints
-			if pointSizeTooSmall || notEnoughBlocks {
-				var etType = etPointSize
-				var newSize = archive.avgCompressedPointSize
+			// total := (max - min) / archive.secondsPerPoint
+			// pointSizeTooSmall := total < archive.numberOfPoints
+			if archiveTooSmall {
+				var etType extendType = etUnknown
+				var newSize float32
 				var newBlockCount int
-				if pointSizeTooSmall {
-					newSize = float32((float64(archive.numberOfPoints)/float64(total) + 0.0618)) * archive.avgCompressedPointSize
 
-					archive.stats.extend.pointSize++
-				} else {
+				avgPointsPerBlock := totalPoints / len(archive.blockRanges)
+				pointSizeTooSmall := avgPointsPerBlock < int(math.Ceil(float64(whisper.pointsPerBlock)*0.95)) // tolerate 5% of deviations
+				if pointSizeTooSmall {
+					// newSize = float32((float64(archive.numberOfPoints)/float64(total) + 0.0618)) * archive.avgCompressedPointSize
+					newSize = float32(math.Ceil(float64(archive.blockSize*len(archive.blockRanges)) / float64(totalPoints)))
+
+					if newSize > archive.avgCompressedPointSize {
+						etType = etPointSize
+						archive.stats.extend.pointSize++
+					}
+				}
+
+				if etType == etUnknown {
 					// TODO: no need to extend blocks for online conversion if all now-retention points are already saved?
 					newBlockCount = archive.blockCount + 1
 					etType = etBlock
@@ -1172,17 +1200,10 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 					archive.stats.extend.block++
 				}
 
+				// TODO: Should stry continue saving data if possible. Better keep things running rather than discard everything (good for having errors because disk is full)
 				if err := whisper.extend(etType, archive, newSize, newBlockCount); err != nil {
 					return err
 				}
-
-				// for _, narchive := range whisper.archives {
-				// 	if narchive.secondsPerPoint == archive.secondsPerPoint {
-				// 		*archive = *narchive // important
-				// 		return narchive.appendToBlockAndRotate(left)
-				// 	}
-				// }
-				// return nil
 
 				return archive.appendToBlockAndRotate(left)
 			}
@@ -1199,7 +1220,8 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 type extendType int
 
 const (
-	etPointSize extendType = iota
+	etUnknown extendType = iota
+	etPointSize
 	etBlock
 )
 
@@ -1209,6 +1231,10 @@ const (
 // 	2. add stats [done]
 // 	3. add a unit test
 func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize float32, newBlockCount int) error {
+	if debugExtend {
+		fmt.Println("extend:", whisper.file.Name(), newSize, newBlockCount)
+	}
+
 	var rets []*Retention
 	for _, arc := range whisper.archives {
 		ret := &Retention{
@@ -1222,6 +1248,8 @@ func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize f
 				ret.blockCount = newBlockCount
 			} else if etype == etPointSize {
 				ret.avgCompressedPointSize = newSize
+			} else {
+				return fmt.Errorf("unknown extendType %d", etype)
 			}
 		}
 		rets = append(rets, ret)
