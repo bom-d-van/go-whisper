@@ -1,0 +1,58 @@
+diff --git a/compress.go b/compress.go
+index 197dfaf..9eca3cd 100644
+--- a/compress.go
++++ b/compress.go
+@@ -92,6 +92,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written i
+ 		a.blockRanges[a.cblock.index].end = a.cblock.pn1.interval
+ 		a.blockRanges[a.cblock.index].count = a.cblock.count
+ 		a.blockRanges[a.cblock.index].crc32 = a.cblock.crc32
++		a.blockRanges[a.cblock.index].lastByteOffset = a.cblock.lastByteOffset
+ 	}()
+ 
+ 	if debugCompress {
+diff --git a/whisper.go b/whisper.go
+index 9469955..18a2eec 100644
+--- a/whisper.go
++++ b/whisper.go
+@@ -35,7 +35,7 @@ const (
+ 	FreeCompressedArchiveInfoSize = 32
+ 
+ 	avgCompressedPointSize = 2
+-	BlockRangeSize         = 16
++	BlockRangeSize         = 20
+ 	endOfBlockSize         = 5
+ 
+ 	DefaultPointsPerBlock = 7200
+@@ -608,6 +608,8 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
+ 			offset += IntSize
+ 			arc.blockRanges[i].crc32 = uint32(unpackInt(b[offset : offset+IntSize]))
+ 			offset += IntSize
++			arc.blockRanges[i].lastByteOffset = unpackInt(b[offset : offset+IntSize])
++			offset += IntSize
+ 		}
+ 
+ 		// arc.initBlockRanges()
+@@ -705,6 +707,7 @@ func (whisper *Whisper) WriteHeaderCompressed() (err error) {
+ 			i += packInt(b, bran.end, i)
+ 			i += packInt(b, bran.count, i)
+ 			i += packInt(b, int(bran.crc32), i)
++			i += packInt(b, bran.lastByteOffset, i)
+ 		}
+ 
+ 		if archive.hasBuffer() {
+@@ -1807,10 +1810,11 @@ type blockInfo struct {
+ }
+ 
+ type blockRange struct {
+-	index      int
+-	start, end int
+-	count      int
+-	crc32      uint32
++	index          int
++	start, end     int // start and end timestamps
++	count          int
++	crc32          uint32
++	lastByteOffset int
+ }
+ 
+ func (a *archiveInfo) blockOffset(blockIndex int) int {
