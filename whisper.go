@@ -1119,14 +1119,15 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 	blockBuffer := make([]byte, len(dps)*(PointSize+extraPointSize)+endOfBlockSize)
 
 	for {
+		offset := archive.cblock.lastByteOffset // lastByteOffset is updated in appendPointsToBlock
 		size, left, rotate := archive.appendPointsToBlock(blockBuffer, dps)
 
 		// flush block
-		end := size + endOfBlockSize // include end-of-block marker
-		if end >= len(blockBuffer) {
-			end = len(blockBuffer) - 1
+		if size >= len(blockBuffer) {
+			// TODO: panic?
+			size = len(blockBuffer)
 		}
-		if err := whisper.fileWriteAt(blockBuffer[:end], int64(archive.cblock.lastByteOffset-size+1)); err != nil {
+		if err := whisper.fileWriteAt(blockBuffer[:size], int64(offset)); err != nil {
 			return err
 		}
 
@@ -1201,7 +1202,7 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 				}
 
 				// TODO: Should stry continue saving data if possible. Better keep things running rather than discard everything (good for having errors because disk is full)
-				if err := whisper.extend(etType, archive, newSize, newBlockCount); err != nil {
+				if err := whisper.extend(etType, &archive, newSize, newBlockCount); err != nil {
 					return err
 				}
 
@@ -1230,20 +1231,21 @@ const (
 // 	1. more complex logics of choosing which archive(s) should be resized [done]
 // 	2. add stats [done]
 // 	3. add a unit test
-func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize float32, newBlockCount int) error {
+func (whisper *Whisper) extend(etype extendType, archive **archiveInfo, newSize float32, newBlockCount int) error {
 	if debugExtend {
 		fmt.Println("extend:", whisper.file.Name(), newSize, newBlockCount)
 	}
 
 	var rets []*Retention
-	for _, arc := range whisper.archives {
+	var arcIndex int
+	for i, arc := range whisper.archives {
 		ret := &Retention{
 			secondsPerPoint:        arc.secondsPerPoint,
 			numberOfPoints:         arc.numberOfPoints,
 			avgCompressedPointSize: arc.avgCompressedPointSize,
 			blockCount:             arc.blockCount,
 		}
-		if arc == archive {
+		if arc == *archive {
 			if etype == etBlock {
 				ret.blockCount = newBlockCount
 			} else if etype == etPointSize {
@@ -1251,6 +1253,7 @@ func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize f
 			} else {
 				return fmt.Errorf("unknown extendType %d", etype)
 			}
+			arcIndex = i
 		}
 		rets = append(rets, ret)
 	}
@@ -1300,8 +1303,8 @@ func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize f
 	}
 
 	// important
-	for i, arc := range whisper.archives {
-		*arc = *nwhisper.archives[i]
+	for i := range whisper.archives {
+		*whisper.archives[i] = *nwhisper.archives[i]
 	}
 
 	// important
@@ -1311,6 +1314,8 @@ func (whisper *Whisper) extend(etype extendType, archive *archiveInfo, newSize f
 		arc.whisper = whisper // important!
 	}
 	whisper.Extended = true
+
+	*archive = whisper.archives[arcIndex]
 
 	return err
 }
@@ -1836,7 +1841,7 @@ type blockInfo struct {
 
 type blockRange struct {
 	index      int
-	start, end int
+	start, end int // start and end timestamps
 	count      int
 	crc32      uint32
 }

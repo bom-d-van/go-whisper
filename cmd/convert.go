@@ -80,7 +80,7 @@ func main() {
 					time.Sleep(time.Millisecond * time.Duration(rand.Intn(1000)))
 				}
 				time.Sleep(time.Second * 3)
-				close(shutdownc)
+				shutdownc <- syscall.SIGUSR2
 			}
 
 			time.Sleep(time.Hour)

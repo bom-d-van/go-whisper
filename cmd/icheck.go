@@ -5,7 +5,6 @@ import (
 	"os"
 
 	whisper "github.com/go-graphite/go-whisper"
-
 	"github.com/kr/pretty"
 )
 

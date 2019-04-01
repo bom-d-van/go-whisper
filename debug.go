@@ -2,6 +2,7 @@ package whisper
 
 import (
 	"fmt"
+	"os"
 )
 
 func (whisper *Whisper) CheckIntegrity() {
@@ -30,24 +31,26 @@ func (whisper *Whisper) CheckIntegrity() {
 			if err := whisper.fileReadAt(buf, int64(arc.blockOffset(block.index))); err != nil {
 				panic(err)
 			}
-			_, endOffset, err := arc.readFromBlock(buf, []dataPoint{}, block.start, block.end)
+			_, _, err := arc.readFromBlock(buf, []dataPoint{}, block.start, block.end)
 			if err != nil {
 				panic(err)
 			}
 
-			if block.index != arc.cblock.index {
-				endOffset += 1
+			endOffset := arc.blockSize
+			if block.index == arc.cblock.index {
+				endOffset = arc.cblock.lastByteOffset - arc.blockOffset(block.index)
 			}
+
 			crc := crc32(buf[:endOffset], 0)
 			if crc != block.crc32 {
-
-				msg += fmt.Sprintf("    archive.%d.block.%d crc32: %08x check: %08x endOffset: %d/%d\n", arc.secondsPerPoint, block.index, block.crc32, crc, endOffset, int(arc.blockOffset(block.index))+endOffset)
+				msg += fmt.Sprintf("    archive.%d.block.%d crc32: %08x check: %08x startOffset: %d endOffset: %d/%d\n", arc.secondsPerPoint, block.index, block.crc32, crc, arc.blockOffset(block.index), endOffset, int(arc.blockOffset(block.index))+endOffset)
 			}
 		}
 	}
 
 	if msg != "" {
 		fmt.Printf("file: %s\n%s", whisper.file.Name(), msg)
+		os.Exit(1)
 	}
 }
 
@@ -98,13 +101,14 @@ func (whisper *Whisper) Dump(all, showDecompressionInfo bool) {
 				panic(err)
 			}
 
-			dps, endOffset, err := arc.readFromBlock(buf, []dataPoint{}, block.start, block.end)
+			dps, _, err := arc.readFromBlock(buf, []dataPoint{}, block.start, block.end)
 			if err != nil {
 				panic(err)
 			}
 
-			if block.index != arc.cblock.index {
-				endOffset += 1
+			endOffset := arc.blockSize
+			if block.index == arc.cblock.index {
+				endOffset = arc.cblock.lastByteOffset - arc.blockOffset(block.index)
 			}
 			crc := crc32(buf[:endOffset], 0)
 
@@ -139,22 +143,20 @@ func (archive *archiveInfo) dumpInfo() {
 	fmt.Printf("  last_byte_bit_pos: %d\n", archive.cblock.lastByteBitPos)
 	fmt.Printf("  crc32:             %08x\n", archive.cblock.crc32)
 	fmt.Printf("  stats:\n")
-	// fmt.Printf("     interval.len1:    %d\n", archive.stats.interval.len1)
-	// fmt.Printf("     interval.len9:    %d\n", archive.stats.interval.len9)
-	// fmt.Printf("     interval.len12:   %d\n", archive.stats.interval.len12)
-	// fmt.Printf("     interval.len16:   %d\n", archive.stats.interval.len16)
-	// fmt.Printf("     interval.len36:   %d\n", archive.stats.interval.len36)
-	// fmt.Printf("     value.same:       %d\n", archive.stats.value.same)
-	// fmt.Printf("     value.sameLen:    %d\n", archive.stats.value.sameLen)
-	// fmt.Printf("     value.variedLen:  %d\n", archive.stats.value.variedLen)
 	fmt.Printf("     extend.block:     %d\n", archive.stats.extend.block)
 	fmt.Printf("     extend.pointSize: %d\n", archive.stats.extend.pointSize)
 	fmt.Printf("     discard.oldInterval: %d\n", archive.stats.discard.oldInterval)
 
-	// archive.sortBlockRanges()
-
 	for _, block := range archive.getSortedBlockRanges() {
-		// fmt.Printf("%d: %d-%d %d %d\n", block.index, block.start, block.end, (block.end-block.start)/archive.secondsPerPoint+1, archive.blockOffset(block.index))
-		fmt.Printf("%02d: %10d - %10d count:%5d offset:%d crc32:%08x\n", block.index, block.start, block.end, block.count, archive.blockOffset(block.index), block.crc32)
+		lastByteOffset := archive.blockOffset(block.index) + archive.blockSize - 1
+		if block.index == archive.cblock.index {
+			lastByteOffset = archive.cblock.lastByteOffset
+		}
+		fmt.Printf(
+			"%02d: %10d - %10d count:%5d crc32:%08x start_offset:%d last_byte_offset: %d\n",
+			block.index, block.start,
+			block.end, block.count, block.crc32,
+			archive.blockOffset(block.index), lastByteOffset,
+		)
 	}
 }

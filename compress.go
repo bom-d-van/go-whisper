@@ -3,7 +3,6 @@ package whisper
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"math"
 	"math/bits"
 	"sort"
@@ -75,7 +74,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written i
 		a.cblock.lastByte = bw.buf[bw.index]
 		a.cblock.lastByteBitPos = int(bw.bitPos)
 		a.cblock.lastByteOffset += bw.index
-		written = bw.index + 1
+		written = bw.index
 
 		// write end-of-block marker if there is enough space
 		bw.Write(4, 0x0f)
@@ -83,10 +82,19 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written i
 
 		// exclude last byte from crc32 unless block is full
 		if rotate {
+			blockEnd := a.blockOffset(a.cblock.index) + a.blockSize - 1
+			if left := blockEnd - a.cblock.lastByteOffset - (bw.index - written); left > 0 {
+				bw.index += left
+			}
+
+			a.cblock.crc32 = crc32(buf[:bw.index+1], a.cblock.crc32)
+			a.cblock.lastByteOffset = blockEnd
+		} else if written > 0 {
+			// exclude eob for crc32 when block isn't full
 			a.cblock.crc32 = crc32(buf[:written], a.cblock.crc32)
-		} else if written-1 > 0 {
-			a.cblock.crc32 = crc32(buf[:written-1], a.cblock.crc32)
 		}
+
+		written = bw.index
 
 		a.blockRanges[a.cblock.index].start = a.cblock.p0.interval
 		a.blockRanges[a.cblock.index].end = a.cblock.pn1.interval
@@ -241,9 +249,9 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written i
 				}
 
 				if debugCompress {
-					log.Printf("lz = %+v\n", lz)
-					log.Printf("mlen = %+v\n", mlen)
-					log.Printf("xor mblock = %08b\n", xor)
+					fmt.Printf("lz = %+v\n", lz)
+					fmt.Printf("mlen = %+v\n", mlen)
+					fmt.Printf("xor mblock = %08b\n", xor)
 				}
 
 				bw.Write(2, 3)
@@ -332,8 +340,8 @@ func (bw *BitsWriter) Write(lenb int, data uint64) {
 		if end >= len(bw.buf) {
 			end = len(bw.buf) - 1
 		}
-		log.Printf("bw.bitPos = %+v\n", bw.bitPos)
-		log.Printf("bw.buf = %08b\n", bw.buf[bw.index:end])
+		fmt.Printf("bw.bitPos = %+v\n", bw.bitPos)
+		fmt.Printf("bw.buf = %08b\n", bw.buf[bw.index:end])
 	}
 
 	for _, b := range buf {
@@ -365,7 +373,7 @@ func (bw *BitsWriter) Write(lenb int, data uint64) {
 		}
 	}
 	if debugBitsWrite {
-		log.Printf("bw.buf = %08b\n", bw.buf[index:end])
+		fmt.Printf("bw.buf = %08b\n", bw.buf[index:end])
 	}
 }
 
@@ -418,9 +426,9 @@ readloop:
 			skip = 4
 			toRead = 32
 		default:
-			log.Printf("br.current = %+v\n", br.current)
-			log.Printf("br.bitPos = %+v\n", br.bitPos)
-			log.Printf("len(buf) = %+v\n", len(buf))
+			// fmt.Printf("br.current = %+v\n", br.current)
+			// fmt.Printf("br.bitPos = %+v\n", br.bitPos)
+			// fmt.Printf("len(buf) = %+v\n", len(buf))
 			if br.current >= len(buf)-1 {
 				break readloop
 			}
