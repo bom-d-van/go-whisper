@@ -5,8 +5,10 @@ package whisper
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
+	"sort"
 	"testing"
 	"time"
 
@@ -96,4 +98,89 @@ func TestCompressedWhisperInplaceConvert(t *testing.T) {
 
 	cwsp.Close()
 	wsp.Close()
+}
+
+func TestBrokenWhisperFile(t *testing.T) {
+	wsp, err := OpenWithOptions("test/var/lib/carbon/whisper/loadbalancers/group/external_102/externallb-108_ams4_prod_booking_com/haproxy/backend/chat_booking_com_https_ams4/server/intercom-1003_ams4_prod_booking_com/stot.wsp", &Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ps, err := wsp.Fetch(1552764920, 1552854180)
+	// if err != nil {
+	// 	t.Fatal(err)
+	// }
+	start := 1552764920
+	end := 1552854180
+
+	var points []dataPoint
+	{
+		archive := wsp.archives[0]
+		b := make([]byte, archive.Size())
+		err := wsp.fileReadAt(b, archive.Offset())
+		if err != nil {
+			t.Fatal(err)
+		}
+		points = unpackDataPoints(b)
+		sort.Slice(points, func(i, j int) bool {
+			return points[i].interval < points[j].interval
+		})
+
+		// filter null data points
+		var index int
+		for i := 0; i < len(points); i++ {
+			if start <= points[i].interval && points[i].interval <= end {
+				points[index] = points[i]
+				index++
+			}
+		}
+		points = points[:index]
+	}
+
+	log.Printf("len(points) = %+v\n", len(points))
+	log.Printf("points[0] = %+v\n", points[0])
+	log.Printf("points[len(points)-1] = %+v\n", points[len(points)-1])
+
+	cwsp, err := OpenWithOptions("tmp_stot.cwsp", &Options{})
+
+	archive := cwsp.archives[0]
+	var nblock blockInfo
+	nblock.index = 3
+	nblock.lastByteBitPos = 7
+	nblock.lastByteOffset = archive.blockOffset(nblock.index)
+	archive.cblock = nblock
+	archive.blockRanges = make([]blockRange, 4)
+	archive.blockRanges[nblock.index].start = 0
+	archive.blockRanges[nblock.index].end = 0
+
+	log.Printf("nblock.lastByteOffset = %+v\n", nblock.lastByteOffset)
+	log.Printf("archive.blockSize = %+v\n", archive.blockSize)
+
+	const extraPointSize = 2
+	blockBuffer := make([]byte, len(points)*(PointSize+extraPointSize)+endOfBlockSize)
+
+	// debugCompress = true
+	size, left, rotate := archive.appendPointsToBlock(blockBuffer, points)
+	log.Printf("size = %+v\n", size)
+	log.Printf("len(left) = %+v\n", len(left))
+	log.Printf("rotate = %+v\n", rotate)
+
+	// blockBuffer2 := blockBuffer[6510:]
+	// for i := 0; i < len(blockBuffer2); i += 16 {
+	// 	for j := i; j < i+16; j += 2 {
+	// 		fmt.Printf("%04x ", blockBuffer2[j:j+2])
+	// 	}
+	// 	fmt.Println("")
+	// }
+
+	var dst []dataPoint
+	dst2, _, err := archive.readFromBlock(blockBuffer, dst, start, end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log.Printf("len(dst) = %+v\n", len(dst2))
+	log.Printf("archive.blockRanges[3].crc32 = %x\n", archive.blockRanges[3].crc32)
+	for i, p := range dst2 {
+		// continue
+		fmt.Printf("  % 4d %d: %f\n", i, p.interval, p.value)
+	}
 }
