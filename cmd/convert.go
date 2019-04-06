@@ -38,6 +38,7 @@ func main() {
 	var force = flag.Bool("force", false, "ignore records progress.db and convert the files")
 	var oneoff = flag.Bool("one-off", false, "only scan once")
 	var keepOriginal = flag.Bool("keep-original", false, "keep both the original and compressed whisper files")
+	var now = flag.Int64("now", 0, "specify the current time")
 	var help = flag.Bool("help", false, "show help message")
 	flag.BoolVar(help, "h", false, "show help message")
 	flag.Parse()
@@ -48,6 +49,12 @@ func main() {
 	}
 	if err := os.MkdirAll(*homdDir, 0644); err != nil {
 		panic(err)
+	}
+
+	if *now > 0 {
+		whisper.Now = func() time.Time {
+			return time.Unix(*now, 0)
+		}
 	}
 
 	if *oneoff {
