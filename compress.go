@@ -511,20 +511,6 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 	return nil
 }
 
-type extendType int
-
-const (
-	etUnknown extendType = iota
-	etPointSize
-	etBlock
-)
-
-// TODO:
-// 	0. test extend with UpdateMany api!
-// 	1. more complex logics of choosing which archive(s) should be resized [done]
-// 	2. add stats [done]
-// 	3. add a unit test
-// func (whisper *Whisper) extend(etype extendType, archive **archiveInfo, newSize float32, newBlockCount int) error {
 func (whisper *Whisper) extendIfNeeded() error {
 	var rets []*Retention
 	var extend bool

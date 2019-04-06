@@ -21,9 +21,7 @@ func (whisper *Whisper) CheckIntegrity() {
 
 	for _, arc := range whisper.archives {
 		for _, block := range arc.blockRanges {
-			// fmt.Printf("archive.%d %s block %d\n", arc.secondsPerPoint, time.Duration(int(time.Second)*arc.secondsPerPoint*arc.numberOfPoints), block.index)
 			if block.start == 0 {
-				// fmt.Printf("    [empty]\n")
 				continue
 			}
 
@@ -61,70 +59,41 @@ func (whisper *Whisper) Dump(all, showDecompressionInfo bool) {
 	fmt.Printf("aggregation_method:        %s\n", whisper.aggregationMethod)
 	fmt.Printf("max_retention:             %d\n", whisper.maxRetention)
 	fmt.Printf("x_files_factor:            %f\n", whisper.xFilesFactor)
-	fmt.Printf("comp_version:              %d\n", whisper.compVersion)
-	fmt.Printf("points_per_block:          %d\n", whisper.pointsPerBlock)
-	fmt.Printf("avg_compressed_point_size: %f\n", whisper.avgCompressedPointSize)
-	fmt.Printf("crc32:                     %X\n", whisper.crc32)
+
+	if whisper.compressed {
+		fmt.Printf("comp_version:              %d\n", whisper.compVersion)
+		fmt.Printf("points_per_block:          %d\n", whisper.pointsPerBlock)
+		fmt.Printf("avg_compressed_point_size: %f\n", whisper.avgCompressedPointSize)
+		fmt.Printf("crc32:                     %X\n", whisper.crc32)
+	}
+
 	fmt.Printf("archives:                  %d\n", len(whisper.archives))
 	for i, arc := range whisper.archives {
 		fmt.Printf("archives.%d.retention:      %s\n", i, arc.Retention)
 	}
 
-	for _, arc := range whisper.archives {
-		arc.dumpInfo()
+	for i, arc := range whisper.archives {
+		if whisper.compressed {
+			arc.dumpInfoCompressed()
+		} else {
+			arc.dumpInfoStandard(i)
+		}
 	}
 
 	if !all {
 		return
 	}
 
-	for _, arc := range whisper.archives {
-		fmt.Println("")
-
-		if arc.hasBuffer() {
-			fmt.Printf("archive %s buffer[%d]:\n", arc.Retention, len(arc.buffer)/PointSize)
-			dps := unpackDataPoints(arc.buffer)
-			for i, p := range dps {
-				fmt.Printf("  % 4d %d: %f\n", i, p.interval, p.value)
-			}
-		}
-
-		for _, block := range arc.blockRanges {
-			fmt.Printf("archive %s block %d @%d\n", arc.Retention, block.index, arc.blockOffset(block.index))
-			if block.start == 0 {
-				fmt.Printf("    [empty]\n")
-				continue
-			}
-
-			buf := make([]byte, arc.blockSize)
-			if err := whisper.fileReadAt(buf, int64(arc.blockOffset(block.index))); err != nil {
-				panic(err)
-			}
-
-			dps, _, err := arc.readFromBlock(buf, []dataPoint{}, block.start, block.end)
-			if err != nil {
-				panic(err)
-			}
-
-			endOffset := arc.blockSize
-			if block.index == arc.cblock.index {
-				endOffset = arc.cblock.lastByteOffset - arc.blockOffset(block.index)
-			}
-			crc := crc32(buf[:endOffset], 0)
-
-			startOffset := int(arc.blockOffset(block.index))
-			fmt.Printf("crc32: %08x check: %08x startOffset: %d endOffset: %d length: %d\n", block.crc32, crc, startOffset, startOffset+endOffset, endOffset)
-
-			for i, p := range dps {
-				// continue
-				fmt.Printf("  % 4d %d: %v\n", i, p.interval, p.value)
-			}
+	for i, arc := range whisper.archives {
+		if whisper.compressed {
+			arc.dumpDataPointsCompressed()
+		} else {
+			whisper.dumpDataPointsStandard(i, arc)
 		}
 	}
 }
 
-// TODO: check if block ranges match data in blocks
-func (archive *archiveInfo) dumpInfo() {
+func (archive *archiveInfo) dumpInfoCompressed() {
 	fmt.Println("")
 	fmt.Printf("retention:         %s\n", archive.Retention)
 	fmt.Printf("number_of_points:  %d\n", archive.numberOfPoints)
@@ -158,5 +127,72 @@ func (archive *archiveInfo) dumpInfo() {
 			block.end, block.count, block.crc32,
 			archive.blockOffset(block.index), lastByteOffset,
 		)
+	}
+}
+
+func (arc *archiveInfo) dumpDataPointsCompressed() {
+	fmt.Println("")
+
+	if arc.hasBuffer() {
+		fmt.Printf("archive %s buffer[%d]:\n", arc.Retention, len(arc.buffer)/PointSize)
+		dps := unpackDataPoints(arc.buffer)
+		for i, p := range dps {
+			fmt.Printf("  % 4d %d: %f\n", i, p.interval, p.value)
+		}
+	}
+
+	for _, block := range arc.blockRanges {
+		fmt.Printf("archive %s block %d @%d\n", arc.Retention, block.index, arc.blockOffset(block.index))
+		if block.start == 0 {
+			fmt.Printf("    [empty]\n")
+			continue
+		}
+
+		buf := make([]byte, arc.blockSize)
+		if err := arc.whisper.fileReadAt(buf, int64(arc.blockOffset(block.index))); err != nil {
+			panic(err)
+		}
+
+		dps, _, err := arc.readFromBlock(buf, []dataPoint{}, block.start, block.end)
+		if err != nil {
+			panic(err)
+		}
+
+		endOffset := arc.blockSize
+		if block.index == arc.cblock.index {
+			endOffset = arc.cblock.lastByteOffset - arc.blockOffset(block.index)
+		}
+		crc := crc32(buf[:endOffset], 0)
+
+		startOffset := int(arc.blockOffset(block.index))
+		fmt.Printf("crc32: %08x check: %08x startOffset: %d endOffset: %d length: %d\n", block.crc32, crc, startOffset, startOffset+endOffset, endOffset)
+
+		for i, p := range dps {
+			// continue
+			fmt.Printf("  % 4d %d: %v\n", i, p.interval, p.value)
+		}
+	}
+}
+
+func (archive *archiveInfo) dumpInfoStandard(index int) {
+	fmt.Printf("\nArchive %d info:\n", index)
+	fmt.Printf("  offset: %d\n", archive.offset)
+	fmt.Printf("  second per point: %d\n", archive.secondsPerPoint)
+	fmt.Printf("  points: %d\n", archive.numberOfPoints)
+	fmt.Printf("  retention: %s\n", archive.Retention)
+	fmt.Printf("  size: %d\n", archive.Size())
+}
+
+func (whisper *Whisper) dumpDataPointsStandard(index int, archive *archiveInfo) {
+	b := make([]byte, archive.Size())
+	err := whisper.fileReadAt(b, archive.Offset())
+	if err != nil {
+		panic(err)
+	}
+	points := unpackDataPoints(b)
+
+	fmt.Printf("\nArchive %d data:\n", index)
+	for i, p := range points {
+		fmt.Printf("%d: %d,% 10v\n", i, p.interval, p.value)
 	}
 }

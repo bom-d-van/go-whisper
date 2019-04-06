@@ -111,7 +111,7 @@ func TestBlockReadWrite2(t *testing.T) {
 		acv.secondsPerPoint = 1
 		acv.numberOfPoints = 100
 		acv.cblock.lastByteBitPos = 7
-		acv.blockSize = int(float64(acv.numberOfPoints) * avgCompressedPointSize)
+		acv.blockSize = int(float32(acv.numberOfPoints) * avgCompressedPointSize)
 		acv.blockRanges = make([]blockRange, 1)
 
 		ts := 1544456874
