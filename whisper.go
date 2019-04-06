@@ -38,7 +38,13 @@ const (
 	BlockRangeSize         = 16
 	endOfBlockSize         = 5
 
-	DefaultPointsPerBlock = 7200
+	// One can see that blocks that extend longer than two
+	// hours provide diminishing returns for compressed size. A
+	// two-hour block allows us to achieve a compression ratio of
+	// 1.37 bytes per data point.
+	//                                      4.1.2 Compressing values
+	//     Gorilla: A Fast, Scalable, In-Memory Time Series Database
+	DefaultPointsPerBlock = 7200 // recommended by the gorilla paper algorithm
 
 	// using 2 buffer here to mitigate data points arriving at
 	// random orders causing early propagation
@@ -937,6 +943,10 @@ func (whisper *Whisper) UpdateMany(points []*TimeSeriesPoint) (err error) {
 		if err := whisper.WriteHeaderCompressed(); err != nil {
 			return err
 		}
+
+		if err := whisper.extendIfNeeded(); err != nil {
+			return err
+		}
 	}
 
 	return
@@ -1149,67 +1159,6 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 		nblock.index = (archive.cblock.index + 1) % len(archive.blockRanges)
 		nblock.lastByteBitPos = 7
 		nblock.lastByteOffset = archive.blockOffset(nblock.index)
-
-		// check if it's a whole-archive rotation
-		isFull := true
-		// var max, min int
-		var totalPoints int
-		var overriddenEnd int
-		for _, b := range archive.blockRanges {
-			isFull = isFull && b.start > 0 && b.end > 0
-			// if min == 0 || min > b.start {
-			// 	min = b.start
-			// }
-			// if max == 0 || max < b.end {
-			// 	max = b.end
-			// }
-			totalPoints += b.count
-			if b.index == nblock.index {
-				overriddenEnd = b.end
-			}
-		}
-		if isFull {
-			var archiveTooSmall bool
-			if len(archive.blockRanges) > 1 {
-				lowerbound := int(Now().Unix()) - archive.MaxRetention()
-				archiveTooSmall = lowerbound <= overriddenEnd
-			}
-			// total := (max - min) / archive.secondsPerPoint
-			// pointSizeTooSmall := total < archive.numberOfPoints
-			if archiveTooSmall {
-				var etType extendType = etUnknown
-				var newSize float32
-				var newBlockCount int
-
-				avgPointsPerBlock := totalPoints / len(archive.blockRanges)
-				pointSizeTooSmall := avgPointsPerBlock < int(math.Ceil(float64(whisper.pointsPerBlock)*0.95)) // tolerate 5% of deviations
-				if pointSizeTooSmall {
-					// newSize = float32((float64(archive.numberOfPoints)/float64(total) + 0.0618)) * archive.avgCompressedPointSize
-					newSize = float32(math.Ceil(float64(archive.blockSize*len(archive.blockRanges)) / float64(totalPoints)))
-
-					if newSize > archive.avgCompressedPointSize {
-						etType = etPointSize
-						archive.stats.extend.pointSize++
-					}
-				}
-
-				if etType == etUnknown {
-					// TODO: no need to extend blocks for online conversion if all now-retention points are already saved?
-					newBlockCount = archive.blockCount + 1
-					etType = etBlock
-
-					archive.stats.extend.block++
-				}
-
-				// TODO: Should stry continue saving data if possible. Better keep things running rather than discard everything (good for having errors because disk is full)
-				if err := whisper.extend(etType, &archive, newSize, newBlockCount); err != nil {
-					return err
-				}
-
-				return archive.appendToBlockAndRotate(left)
-			}
-		}
-
 		archive.cblock = nblock
 		archive.blockRanges[nblock.index].start = 0
 		archive.blockRanges[nblock.index].end = 0
@@ -1231,31 +1180,50 @@ const (
 // 	1. more complex logics of choosing which archive(s) should be resized [done]
 // 	2. add stats [done]
 // 	3. add a unit test
-func (whisper *Whisper) extend(etype extendType, archive **archiveInfo, newSize float32, newBlockCount int) error {
-	if debugExtend {
-		fmt.Println("extend:", whisper.file.Name(), newSize, newBlockCount)
-	}
-
+// func (whisper *Whisper) extend(etype extendType, archive **archiveInfo, newSize float32, newBlockCount int) error {
+func (whisper *Whisper) extendIfNeeded() error {
 	var rets []*Retention
-	var arcIndex int
-	for i, arc := range whisper.archives {
+	var extend bool
+	var msg string
+	for _, arc := range whisper.archives {
 		ret := &Retention{
 			secondsPerPoint:        arc.secondsPerPoint,
 			numberOfPoints:         arc.numberOfPoints,
 			avgCompressedPointSize: arc.avgCompressedPointSize,
 			blockCount:             arc.blockCount,
 		}
-		if arc == *archive {
-			if etype == etBlock {
-				ret.blockCount = newBlockCount
-			} else if etype == etPointSize {
-				ret.avgCompressedPointSize = newSize
-			} else {
-				return fmt.Errorf("unknown extendType %d", etype)
+
+		var totalPoints int
+		var totalBlocks int
+		for _, b := range arc.getSortedBlockRanges() {
+			if b.index == arc.cblock.index {
+				break
 			}
-			arcIndex = i
+
+			totalBlocks += 1
+			totalPoints += b.count
 		}
+		if totalPoints > 0 {
+			avgPointSize := float32(totalBlocks*arc.blockSize) / float32(totalPoints)
+			if avgPointSize > arc.avgCompressedPointSize {
+				extend = true
+				if avgPointSize-arc.avgCompressedPointSize < 0.618 {
+					avgPointSize += 0.618
+				}
+				msg += fmt.Sprintf("%s:%v->%v ", ret, ret.avgCompressedPointSize, avgPointSize)
+				ret.avgCompressedPointSize = avgPointSize
+			}
+		}
+
 		rets = append(rets, ret)
+	}
+
+	if !extend {
+		return nil
+	}
+
+	if debugExtend {
+		fmt.Println("extend:", whisper.file.Name(), msg)
 	}
 
 	filename := whisper.file.Name()
@@ -1298,26 +1266,24 @@ func (whisper *Whisper) extend(etype extendType, archive **archiveInfo, newSize 
 	// TODO: better error handling
 	whisper.Close()
 	nwhisper.file.Close()
-	if err := os.Rename(filename+".extend", filename); err != nil {
+
+	if err = os.Rename(filename+".extend", filename); err != nil {
 		return fmt.Errorf("extend/rename: %s", err)
 	}
 
-	// important
-	for i := range whisper.archives {
-		*whisper.archives[i] = *nwhisper.archives[i]
-	}
-
-	// important
-	nwhisper.file, err = os.OpenFile(filename, os.O_RDWR, 0666)
+	nwhisper, err = OpenWithOptions(filename, whisper.opts)
 	*whisper = *nwhisper
-	for _, arc := range whisper.archives {
-		arc.whisper = whisper // important!
-	}
 	whisper.Extended = true
 
-	*archive = whisper.archives[arcIndex]
-
 	return err
+}
+
+func (archive *archiveInfo) totalPoints() (sum int) {
+	for _, b := range archive.blockRanges {
+		sum += b.count
+	}
+	sum += len(unpackDataPointsStrict(archive.buffer))
+	return sum
 }
 
 func extractPoints(points []*TimeSeriesPoint, now int, maxRetention int) (currentPoints []*TimeSeriesPoint, remainingPoints []*TimeSeriesPoint) {

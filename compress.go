@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/bits"
 	"sort"
+	"time"
 
 	"github.com/kr/pretty"
 )
@@ -74,7 +75,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written i
 		a.cblock.lastByte = bw.buf[bw.index]
 		a.cblock.lastByteBitPos = int(bw.bitPos)
 		a.cblock.lastByteOffset += bw.index
-		written = bw.index
+		written = bw.index // size not including eob
 
 		// write end-of-block marker if there is enough space
 		bw.Write(4, 0x0f)
@@ -94,7 +95,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written i
 			a.cblock.crc32 = crc32(buf[:written], a.cblock.crc32)
 		}
 
-		written = bw.index
+		written = bw.index + 1
 
 		a.blockRanges[a.cblock.index].start = a.cblock.p0.interval
 		a.blockRanges[a.cblock.index].end = a.cblock.pn1.interval
@@ -644,21 +645,18 @@ func dumpBits(data ...uint64) string {
 }
 
 // TODO: refactor err handling. there is a risk of open file leakage.
+//
+// For archive.Buffer handling, CompressTo assumes a simple archive layout that
+// higher archive will propagate to lower archive. [wrong]
+//
+// CompressTo should stop compression/return errors when runs into any issues (if feasible).
 func (whisper *Whisper) CompressTo(dstPath string) error {
 	var rets []*Retention
 	for _, arc := range whisper.archives {
 		rets = append(rets, &Retention{secondsPerPoint: arc.secondsPerPoint, numberOfPoints: arc.numberOfPoints})
 	}
 
-	dst, err := CreateWithOptions(
-		dstPath, rets,
-		whisper.aggregationMethod, whisper.xFilesFactor,
-		&Options{FLock: true, Compressed: true, PointsPerBlock: 7200},
-	)
-	if err != nil {
-		return err
-	}
-
+	var pointsByArchives = make([][]dataPoint, len(whisper.archives))
 	for i := len(whisper.archives) - 1; i >= 0; i-- {
 		archive := whisper.archives[i]
 
@@ -667,50 +665,36 @@ func (whisper *Whisper) CompressTo(dstPath string) error {
 		if err != nil {
 			return err
 		}
-		points := unpackDataPoints(b)
+		points := unpackDataPointsStrict(b)
 		sort.Slice(points, func(i, j int) bool {
 			return points[i].interval < points[j].interval
 		})
 
 		// filter null data points
-		var index int
+		var bound = int(time.Now().Unix()) - archive.MaxRetention()
 		for i := 0; i < len(points); i++ {
-			if points[i].interval > 0 {
-				points[index] = points[i]
-				index++
+			if points[i].interval >= bound {
+				points = points[i:]
+				break
 			}
 		}
-		points = points[:index]
 
-		// extract points that should be saved in archive.buffer
-		if dst.archives[i].hasBuffer() {
-			var foundBuffer int
-			var currentInterval int
-			var bufIndex int
-			var arc = dst.archives[i]
-			var lowerArc = dst.archives[i+1]
-			for i := len(points) - 1; i >= 0; i-- {
-				intv := lowerArc.Interval(points[i].interval)
-				if currentInterval == 0 || currentInterval != intv {
-					currentInterval = intv
-					foundBuffer++
-				}
-				if foundBuffer > 2 {
-					bufIndex = i + 1
-					break
-				}
-			}
-			if len(points[bufIndex:])*PointSize > dst.archives[i].bufferSize {
-				return fmt.Errorf("buffer points extraction incorrect (buffer_size: %d, poitns_to_store: %d)", dst.archives[i].bufferSize, len(points[bufIndex:]))
-			}
+		pointsByArchives[i] = points
+		rets[i].avgCompressedPointSize = estimatePointSize(points, rets[i], DefaultPointsPerBlock)
+	}
 
-			for i, p := range points[bufIndex:] {
-				copy(arc.buffer[i*PointSize:], p.Bytes())
-			}
+	dst, err := CreateWithOptions(
+		dstPath, rets,
+		whisper.aggregationMethod, whisper.xFilesFactor,
+		&Options{FLock: true, Compressed: true, PointsPerBlock: DefaultPointsPerBlock},
+	)
+	if err != nil {
+		return err
+	}
 
-			points = points[:bufIndex]
-		}
-
+	// TODO: consider support moving the last data points to buffer
+	for i := len(whisper.archives) - 1; i >= 0; i-- {
+		points := pointsByArchives[i]
 		if err := dst.archives[i].appendToBlockAndRotate(points); err != nil {
 			return err
 		}
@@ -721,12 +705,48 @@ func (whisper *Whisper) CompressTo(dstPath string) error {
 	}
 
 	// TODO: check if compression is done correctly
-
 	if err := dst.Close(); err != nil {
 		return err
 	}
 
 	return err
+}
+
+// estimatePointSize calculates point size estimation by doing an on-the-fly
+// compression without changing archiveInfo state.
+func estimatePointSize(ps []dataPoint, ret *Retention, pointsPerBlock int) float32 {
+	const extraPointSize = 2
+
+	var sum int
+	for i := 0; i < len(ps); {
+		end := i + pointsPerBlock
+		if end > len(ps) {
+			end = len(ps)
+		}
+
+		buf := make([]byte, pointsPerBlock*(PointSize+extraPointSize)+endOfBlockSize)
+		na := archiveInfo{
+			Retention:   *ret,
+			offset:      0,
+			blockRanges: make([]blockRange, 1),
+			blockSize:   len(buf),
+			cblock: blockInfo{
+				index:          0,
+				lastByteBitPos: 7,
+				lastByteOffset: 0,
+			},
+		}
+
+		size, left, _ := na.appendPointsToBlock(buf, ps[i:end])
+		if len(left) > 0 {
+			i += len(ps) - len(left)
+		} else {
+			i += pointsPerBlock
+		}
+		sum += size
+	}
+
+	return float32(sum) / float32(len(ps))
 }
 
 func (whisper *Whisper) IsCompressed() bool { return whisper.compressed }
