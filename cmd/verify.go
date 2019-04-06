@@ -20,27 +20,31 @@ func init() {
 }
 
 func main() {
-	now := flag.Int("now", int(time.Now().Unix()), "specify the current time")
+	now := flag.Int("now", 0, "specify the current time")
 	ignoreBuffer := flag.Bool("ignore-buffer", false, "ignore points in buffer that haven't been propagated")
-	quarantinesRaw := flag.String("quarantines", "2019-02-21,2019-02-22", "ignore data started from this point")
+	quarantinesRaw := flag.String("quarantines", "", "ignore data started from this point. e.g. 2019-02-21,2019-02-22")
 	flag.Parse()
 
 	var quarantines [][2]int
-	for _, q := range strings.Split(*quarantinesRaw, ";") {
-		var quarantine [2]int
-		for i, t := range strings.Split(q, ",") {
-			tim, err := time.Parse("2006-01-02", t)
-			if err != nil {
-				panic(err)
+	if *quarantinesRaw != "" {
+		for _, q := range strings.Split(*quarantinesRaw, ";") {
+			var quarantine [2]int
+			for i, t := range strings.Split(q, ",") {
+				tim, err := time.Parse("2006-01-02", t)
+				if err != nil {
+					panic(err)
+				}
+				quarantine[i] = int(tim.Unix())
 			}
-			quarantine[i] = int(tim.Unix())
+			quarantines = append(quarantines, quarantine)
 		}
-		quarantines = append(quarantines, quarantine)
 	}
 
-	// whisper.Now = func() time.Time {
-	// 	return time.Unix(*now, 0)
-	// }
+	if *now > 0 {
+		whisper.Now = func() time.Time {
+			return time.Unix(int64(*now), 0)
+		}
+	}
 
 	file1 := flag.Args()[0]
 	file2 := flag.Args()[1]
