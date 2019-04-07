@@ -275,13 +275,13 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 }
 
 type blockInfo struct {
-	index          int `meta:"size:4"`
+	index          int
 	crc32          uint32
-	p0, pn1, pn2   dataPoint `meta:"size:12"` // pn1: point at len(block_points) - 1
-	lastByte       byte      `meta:"size:4"`  // TODO: make it 1
-	lastByteOffset int       `meta:"size:4"`
-	lastByteBitPos int       `meta:"size:4"` // TODO: make it 1
-	count          int       `meta:"size:4"`
+	p0, pn1, pn2   dataPoint // pn1/pn2: points at len(block_points) - 1/2
+	lastByte       byte
+	lastByteOffset int
+	lastByteBitPos int
+	count          int
 }
 
 type blockRange struct {

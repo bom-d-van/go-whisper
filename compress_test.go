@@ -114,33 +114,25 @@ func TestBlockReadWrite2(t *testing.T) {
 		acv.blockSize = int(float32(acv.numberOfPoints) * avgCompressedPointSize)
 		acv.blockRanges = make([]blockRange, 1)
 
-		ts := 1544456874
 		var input []dataPoint = []dataPoint{
-			0: {interval: 1544456874, value: 12},
-			1: {interval: 1544456875, value: 24},
-			2: {interval: 1544456876, value: 15},
-			3: {interval: 1544456877, value: 1},
-			4: {interval: 1544456878, value: 2},
-			5: {interval: 1544456888, value: 3},
-			6: {interval: 1544456889, value: 4},
+			{interval: 1544456874, value: 12},
+			{interval: 1544456875, value: 24},
+			{interval: 1544456876, value: 15},
+			{interval: 1544456877, value: 1},
+			{interval: 1544456878, value: 2},
+			{interval: 1544456888, value: 3},
+			{interval: 1544456889, value: 4},
+			{interval: 1544457000, value: 4},
+			{interval: 1544458000, value: 4},
+			{interval: 1544476889, value: 4},
 		}
 
 		buf := make([]byte, acv.blockSize)
-		var size int
-		{
-			written, _, _ := acv.appendPointsToBlock(buf, input[:1])
-			size += written
-		}
-		{
-			written, _, _ := acv.appendPointsToBlock(buf[size-1:], input[1:5])
-			size += written - 1
-		}
-		{
-			written, _, _ := acv.appendPointsToBlock(buf[size-1:], input[5:])
-			size += written - 1
-		}
+		acv.appendPointsToBlock(buf, input[:1])
+		acv.appendPointsToBlock(buf[acv.cblock.lastByteOffset:], input[1:5])
+		acv.appendPointsToBlock(buf[acv.cblock.lastByteOffset:], input[5:])
 
-		points, _, err := acv.readFromBlock(buf, make([]dataPoint, 0, 200), ts, ts+30)
+		points, _, err := acv.readFromBlock(buf, make([]dataPoint, 0, 200), 1544456874, 1544477000)
 		if err != nil {
 			t.Error(err)
 		}

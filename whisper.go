@@ -290,6 +290,8 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 	}
 
 	// pre-allocate file size, fallocate proved slower
+	//
+	// compressed format ignores sparse flag
 	if options.Sparse && !options.Compressed {
 		if _, err = whisper.file.Seek(int64(whisper.Size()-1), 0); err != nil {
 			return nil, err
@@ -1190,8 +1192,8 @@ func (r retentionsByPrecision) Less(i, j int) bool {
   whisper file.
 */
 type archiveInfo struct {
-	Retention `meta:"size:8"`
-	offset    int `meta:"size:4"`
+	Retention
+	offset int
 
 	next    *archiveInfo
 	whisper *Whisper
@@ -1203,8 +1205,8 @@ type archiveInfo struct {
 	bufferSize int
 
 	blockRanges []blockRange // TODO: remove: sorted by start
-	blockSize   int          `meta:"size:4"`
-	cblock      blockInfo    // mostly for quick block write
+	blockSize   int
+	cblock      blockInfo // mostly for quick block write
 
 	stats struct {
 		// interval and value stats are not saved on disk because they could be
@@ -1217,11 +1219,11 @@ type archiveInfo struct {
 		}
 
 		extend struct {
-			block, pointSize uint32 `meta:"size:4"`
+			block, pointSize uint32
 		}
 
 		discard struct {
-			oldInterval uint32 `meta:"size:4"`
+			oldInterval uint32
 		}
 	}
 }
