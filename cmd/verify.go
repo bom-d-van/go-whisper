@@ -11,8 +11,6 @@ import (
 	"time"
 
 	whisper "github.com/go-graphite/go-whisper"
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func init() {
@@ -23,6 +21,8 @@ func main() {
 	now := flag.Int("now", 0, "specify the current time")
 	ignoreBuffer := flag.Bool("ignore-buffer", false, "ignore points in buffer that haven't been propagated")
 	quarantinesRaw := flag.String("quarantines", "", "ignore data started from this point. e.g. 2019-02-21,2019-02-22")
+	verbose := flag.Bool("verbose", false, "be overly and nicely talkive")
+	flag.BoolVar(verbose, "v", false, "be overly and nicely talkive")
 	flag.Parse()
 
 	var quarantines [][2]int
@@ -64,12 +64,12 @@ func main() {
 		// now := int(whisper.Now().Unix())
 		// from := now - ret.MaxRetention()
 		// until := now
-		from := *now - ret.MaxRetention() + ret.SecondsPerPoint()*60
-		until := *now - 3600*8
+		from := int(whisper.Now().Unix()) - ret.MaxRetention() + ret.SecondsPerPoint()*60
+		until := int(whisper.Now().Unix()) - 3600*8
 
-		fmt.Printf("from = %+v\n", from)
-		fmt.Printf("until = %+v\n", until)
-		fmt.Println(time.Second*time.Duration(ret.MaxRetention()), ret.SecondsPerPoint())
+		if *verbose {
+			fmt.Printf("%d %s: from = %+v until = %+v\n", index, ret, from, until)
+		}
 
 		var dps1, dps2 *whisper.TimeSeries
 		var wg sync.WaitGroup
@@ -143,13 +143,31 @@ func main() {
 			}
 		}
 
-		fmt.Printf("len1 = %d len2 = %d vals1 = %d vals2 = %d\n", len(dps1.Values()), len(dps2.Values()), vals1, vals2)
-
-		if diff := cmp.Diff(dps1.Points(), dps2.Points(), cmp.AllowUnexported(whisper.TimeSeries{}), cmpopts.EquateNaNs()); diff != "" {
-			fmt.Println(diff)
-			fmt.Printf("error: does not match for %s\n", file1)
-			bad = true
+		if *verbose {
+			fmt.Printf("  len1 = %d len2 = %d vals1 = %d vals2 = %d\n", len(dps1.Values()), len(dps2.Values()), vals1, vals2)
 		}
+
+		if len(dps1.Values()) != len(dps2.Values()) {
+			fmt.Printf("  size doesn't match: %d != %d\n", len(dps1.Values()), len(dps2.Values()))
+		}
+		if vals1 != vals2 {
+			fmt.Printf("  values doesn't match: %d != %d\n", vals1, vals2)
+		}
+		for i, p1 := range dps1.Values() {
+			if len(dps2.Values()) < i {
+				break
+			}
+			p2 := dps2.Values()[i]
+			if !((math.IsNaN(p1) && math.IsNaN(p2)) || p1 == p2) {
+				fmt.Printf("    %d: %v != %v\n", i, p1, p2)
+			}
+		}
+
+		// if diff := cmp.Diff(dps1.Points(), dps2.Points(), cmp.AllowUnexported(whisper.TimeSeries{}), cmpopts.EquateNaNs()); diff != "" {
+		// 	fmt.Println(diff)
+		// 	fmt.Printf("error: does not match for %s\n", file1)
+		// 	bad = true
+		// }
 	}
 	if bad {
 		os.Exit(1)
