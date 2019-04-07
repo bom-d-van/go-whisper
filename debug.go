@@ -73,10 +73,11 @@ func (whisper *Whisper) Dump(all, showDecompressionInfo bool) {
 	}
 
 	for i, arc := range whisper.archives {
+		fmt.Printf("\nArchive %d info:\n", i)
 		if whisper.compressed {
 			arc.dumpInfoCompressed()
 		} else {
-			arc.dumpInfoStandard(i)
+			arc.dumpInfoStandard()
 		}
 	}
 
@@ -85,16 +86,16 @@ func (whisper *Whisper) Dump(all, showDecompressionInfo bool) {
 	}
 
 	for i, arc := range whisper.archives {
+		fmt.Printf("\nArchive %d data:\n", i)
 		if whisper.compressed {
 			arc.dumpDataPointsCompressed()
 		} else {
-			whisper.dumpDataPointsStandard(i, arc)
+			whisper.dumpDataPointsStandard(arc)
 		}
 	}
 }
 
 func (archive *archiveInfo) dumpInfoCompressed() {
-	fmt.Println("")
 	fmt.Printf("retention:         %s\n", archive.Retention)
 	fmt.Printf("number_of_points:  %d\n", archive.numberOfPoints)
 	fmt.Printf("retention:         %s\n", archive.Retention)
@@ -131,8 +132,6 @@ func (archive *archiveInfo) dumpInfoCompressed() {
 }
 
 func (arc *archiveInfo) dumpDataPointsCompressed() {
-	fmt.Println("")
-
 	if arc.hasBuffer() {
 		fmt.Printf("archive %s buffer[%d]:\n", arc.Retention, len(arc.buffer)/PointSize)
 		dps := unpackDataPoints(arc.buffer)
@@ -174,8 +173,7 @@ func (arc *archiveInfo) dumpDataPointsCompressed() {
 	}
 }
 
-func (archive *archiveInfo) dumpInfoStandard(index int) {
-	fmt.Printf("\nArchive %d info:\n", index)
+func (archive *archiveInfo) dumpInfoStandard() {
 	fmt.Printf("  offset: %d\n", archive.offset)
 	fmt.Printf("  second per point: %d\n", archive.secondsPerPoint)
 	fmt.Printf("  points: %d\n", archive.numberOfPoints)
@@ -183,7 +181,7 @@ func (archive *archiveInfo) dumpInfoStandard(index int) {
 	fmt.Printf("  size: %d\n", archive.Size())
 }
 
-func (whisper *Whisper) dumpDataPointsStandard(index int, archive *archiveInfo) {
+func (whisper *Whisper) dumpDataPointsStandard(archive *archiveInfo) {
 	b := make([]byte, archive.Size())
 	err := whisper.fileReadAt(b, archive.Offset())
 	if err != nil {
@@ -191,7 +189,6 @@ func (whisper *Whisper) dumpDataPointsStandard(index int, archive *archiveInfo) 
 	}
 	points := unpackDataPoints(b)
 
-	fmt.Printf("\nArchive %d data:\n", index)
 	for i, p := range points {
 		fmt.Printf("%d: %d,% 10v\n", i, p.interval, p.value)
 	}
