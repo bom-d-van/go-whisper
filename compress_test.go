@@ -311,127 +311,192 @@ func TestCompressedWhisperReadWrite2(t *testing.T) {
 }
 
 func TestCompressedWhisperReadWrite3(t *testing.T) {
-	fpath := "test3.wsp"
-	os.Remove(fpath)
-	os.Remove(fpath + ".cwsp")
-
-	cwhisper, err := CreateWithOptions(
-		fpath+".cwsp",
-		[]*Retention{
-			{secondsPerPoint: 1, numberOfPoints: 172800},   // 1s:2d
-			{secondsPerPoint: 60, numberOfPoints: 40320},   // 1m:28d
-			{secondsPerPoint: 3600, numberOfPoints: 17520}, // 1h:2y
+	inputs := []struct {
+		name string
+		gen  func(prevTime time.Time, index int) *TimeSeriesPoint
+	}{
+		{
+			name: "simple",
+			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
+				return &TimeSeriesPoint{Value: 0, Time: int(prevTime.Add(time.Second).Unix())}
+			},
 		},
-		Average,
-		0,
-		&Options{Compressed: true, PointsPerBlock: 7200, InMemory: true},
-	)
-	if err != nil {
-		panic(err)
-	}
-	ncwhisper, err := CreateWithOptions(
-		fpath,
-		[]*Retention{
-			{secondsPerPoint: 1, numberOfPoints: 172800},   // 1s:2d
-			{secondsPerPoint: 60, numberOfPoints: 40320},   // 1m:28d
-			{secondsPerPoint: 3600, numberOfPoints: 17520}, // 1h:2y
+		{
+			name: "complex",
+			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
+				return &TimeSeriesPoint{
+					Value: rand.NormFloat64(),
+					Time:  int(prevTime.Add(time.Duration(rand.Intn(4096)) * time.Second).Unix()),
+				}
+			},
 		},
-		Average,
-		0,
-		&Options{Compressed: false, PointsPerBlock: 7200, InMemory: true},
-	)
-	if err != nil {
-		panic(err)
+		// {
+		// 	name: "complex_value",
+		// 	gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
+		// 		return &TimeSeriesPoint{
+		// 			Value: rand.NormFloat64(),
+		// 			Time:  int(prevTime.Add(time.Second).Unix()),
+		// 		}
+		// 	},
+		// },
+		// {
+		// 	name: "complex_time",
+		// 	gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
+		// 		return &TimeSeriesPoint{
+		// 			Value: 0,
+		// 			Time:  int(prevTime.Add(time.Duration(rand.Intn(4096)) * time.Second).Unix()),
+		// 		}
+		// 	},
+		// },
+		// {
+		// 	name: "complex_value2",
+		// 	gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
+		// 		return &TimeSeriesPoint{
+		// 			Value: 2000.0 + float64(rand.Intn(100000))/100.0,
+		// 			Time:  int(prevTime.Add(time.Second).Unix()),
+		// 		}
+		// 	},
+		// },
+		{
+			name: "medium",
+			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
+				return &TimeSeriesPoint{
+					Value: 2000.0 + float64(rand.Intn(100000))/100.0,
+					Time:  int(prevTime.Add(time.Duration(rand.Intn(300)) * time.Second).Unix()),
+				}
+			},
+		},
+
+		// start = start.Add(time.Duration(rand.Intn(1024)) * time.Second)
+		// // start = start.Add(time.Second)
+		// ps = append(ps, &TimeSeriesPoint{
+		// 	Time: int(start.Add(time.Duration(i) * time.Second).Unix()),
+		// 	// Time:  int(start.Unix()),
+		// 	// Value: float64(i),
+		// 	// Value: 2000.0 + float64(rand.Intn(100000))/100.0,
+		// 	Value: rand.NormFloat64(),
+		// 	// Value: float64(rand.Intn(100000)),
+		// })
 	}
-	cwhisper.Close()
-	ncwhisper.Close()
 
-	var now = time.Now().Add(time.Hour * 24 * -365)
-	Now = func() time.Time { return now }
-	defer func() { Now = func() time.Time { return time.Now() } }()
+	for _, input := range inputs {
+		t.Logf("case: %s\n", input.name)
 
-	start := Now().Add(time.Hour * -24 * 1)
-	var ps []*TimeSeriesPoint
-	var limit = rand.Intn(300)
-	var statTotalUpdates int
-	for i := 0; i < 60*60*24*30; i++ {
-		// start = start.Add(time.Duration(rand.Intn(10)) * time.Second)
-		start = start.Add(time.Second)
-		ps = append(ps, &TimeSeriesPoint{
-			// Time: int(start.Add(time.Duration(i) * time.Second).Unix()),
-			Time: int(start.Unix()),
-			// Value: float64(i),
-			// Value: 2000.0 + float64(rand.Intn(100000))/100.0,
-			// Value: rand.NormFloat64(),
-			Value: float64(rand.Intn(100000)),
-		})
+		fpath := fmt.Sprintf("test3_%s.wsp", input.name)
+		os.Remove(fpath)
+		os.Remove(fpath + ".cwsp")
 
-		if len(ps) >= limit {
-			// now = now.Add(time.Second * time.Duration(len(ps)))
-			now = start
-			limit = rand.Intn(300)
-			statTotalUpdates++
+		cwhisper, err := CreateWithOptions(
+			fpath+".cwsp",
+			[]*Retention{
+				{secondsPerPoint: 1, numberOfPoints: 172800},   // 1s:2d
+				{secondsPerPoint: 60, numberOfPoints: 40320},   // 1m:28d
+				{secondsPerPoint: 3600, numberOfPoints: 17520}, // 1h:2y
+			},
+			Average,
+			0,
+			&Options{Compressed: true, PointsPerBlock: 7200, InMemory: true},
+		)
+		if err != nil {
+			panic(err)
+		}
+		ncwhisper, err := CreateWithOptions(
+			fpath,
+			[]*Retention{
+				{secondsPerPoint: 1, numberOfPoints: 172800},   // 1s:2d
+				{secondsPerPoint: 60, numberOfPoints: 40320},   // 1m:28d
+				{secondsPerPoint: 3600, numberOfPoints: 17520}, // 1h:2y
+			},
+			Average,
+			0,
+			&Options{Compressed: false, PointsPerBlock: 7200, InMemory: true},
+		)
+		if err != nil {
+			panic(err)
+		}
+		cwhisper.Close()
+		ncwhisper.Close()
 
-			cwhisper, err = OpenWithOptions(fpath+".cwsp", &Options{InMemory: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			ncwhisper, err = OpenWithOptions(fpath, &Options{InMemory: true})
-			if err != nil {
-				t.Fatal(err)
-			}
+		var now = time.Now().Add(time.Hour * 24 * -365)
+		Now = func() time.Time { return now }
+		defer func() { Now = func() time.Time { return time.Now() } }()
 
-			if err := cwhisper.UpdateMany(ps); err != nil {
-				t.Fatal(err)
-			}
-			if err := ncwhisper.UpdateMany(ps); err != nil {
-				t.Fatal(err)
-			}
-			ps = ps[:0]
+		start := Now().Add(time.Hour * -24 * 1)
+		var ps []*TimeSeriesPoint
+		var limit = rand.Intn(300)
+		var statTotalUpdates int
+		for i := 0; i < 60*60*24*30; i++ {
+			p := input.gen(start, i)
+			ps = append(ps, p)
+			start = time.Unix(int64(p.Time), 0)
 
-			if cwhisper.Extended {
-				for _, a := range cwhisper.archives {
-					t.Logf("extended: %s: %d\n", a.Retention, a.totalPoints())
+			if len(ps) >= limit {
+				// now = now.Add(time.Second * time.Duration(len(ps)))
+				now = start
+				limit = rand.Intn(300)
+				statTotalUpdates++
+
+				cwhisper, err = OpenWithOptions(fpath+".cwsp", &Options{InMemory: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ncwhisper, err = OpenWithOptions(fpath, &Options{InMemory: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if err := cwhisper.UpdateMany(ps); err != nil {
+					t.Fatal(err)
+				}
+				if err := ncwhisper.UpdateMany(ps); err != nil {
+					t.Fatal(err)
+				}
+				ps = ps[:0]
+
+				// if cwhisper.Extended {
+				// 	for _, a := range cwhisper.archives {
+				// 		t.Logf("extended: %s: %d\n", a.Retention, a.totalPoints())
+				// 	}
+				// }
+
+				if err := cwhisper.Close(); err != nil {
+					t.Fatal(err)
+				}
+				if err := ncwhisper.Close(); err != nil {
+					t.Fatal(err)
 				}
 			}
-
-			if err := cwhisper.Close(); err != nil {
-				t.Fatal(err)
-			}
-			if err := ncwhisper.Close(); err != nil {
-				t.Fatal(err)
-			}
 		}
-	}
 
-	t.Logf("statTotalUpdates: %d\n", statTotalUpdates)
-	for _, a := range cwhisper.archives {
-		t.Logf("%s: %d\n", a.Retention, a.totalPoints())
-	}
+		// t.Logf("statTotalUpdates: %d\n", statTotalUpdates)
+		// for _, a := range cwhisper.archives {
+		// 	t.Logf("%s: %d\n", a.Retention, a.totalPoints())
+		// }
 
-	if err := newMemFile(fpath).dumpOnDisk(fpath); err != nil {
-		t.Fatal(err)
-	}
-	if err := newMemFile(fpath + ".cwsp").dumpOnDisk(fpath + ".cwsp"); err != nil {
-		t.Fatal(err)
-	}
+		if err := newMemFile(fpath).dumpOnDisk(fpath); err != nil {
+			t.Fatal(err)
+		}
+		if err := newMemFile(fpath + ".cwsp").dumpOnDisk(fpath + ".cwsp"); err != nil {
+			t.Fatal(err)
+		}
 
-	output, err := exec.Command("go", "run", "cmd/verify.go", "-now", fmt.Sprintf("%d", now.Unix()), "-ignore-buffer", fpath, fpath+".cwsp").CombinedOutput()
-	if err != nil {
-		t.Log("go", "run", "cmd/verify.go", "-now", fmt.Sprintf("%d", now.Unix()), "-ignore-buffer", fpath, fpath+".cwsp")
-		fmt.Fprint(os.Stdout, string(output))
-		t.Fatal(err)
-	}
+		t.Log("go", "run", "cmd/verify.go", "-v", "-now", fmt.Sprintf("%d", now.Unix()), "-ignore-buffer", fpath, fpath+".cwsp")
+		output, err := exec.Command("go", "run", "cmd/verify.go", "-v", "-now", fmt.Sprintf("%d", now.Unix()), "-ignore-buffer", fpath, fpath+".cwsp").CombinedOutput()
+		if err != nil {
+			fmt.Fprint(os.Stdout, string(output))
+			t.Fatal(err)
+		}
 
-	std, err := os.Stat(fpath)
-	if err != nil {
-		t.Fatal(err)
+		std, err := os.Stat(fpath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmp, err := os.Stat(fpath + ".cwsp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("compression ratio: %.2f\n", float64(cmp.Size()*100)/float64(std.Size()))
 	}
-	cmp, err := os.Stat(fpath + ".cwsp")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("compression ratio: %.2f\n", float64(cmp.Size()*100)/float64(std.Size()))
 }
 
 func TestCompressTo(t *testing.T) {
