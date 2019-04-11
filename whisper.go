@@ -69,6 +69,7 @@ type Options struct {
 	Compressed     bool
 	PointsPerBlock int
 	PointSize      float32
+	InMemory       bool
 }
 
 func unitMultiplier(s string) (int, error) {
@@ -148,11 +149,23 @@ func ParseRetentionDefs(retentionDefs string) (Retentions, error) {
 	return retentions, nil
 }
 
+type file interface {
+	Seek(offset int64, whence int) (ret int64, err error)
+	Fd() uintptr
+	ReadAt(b []byte, off int64) (n int, err error)
+	WriteAt(b []byte, off int64) (n int, err error)
+	Read(b []byte) (n int, err error)
+	Name() string
+	Close() error
+	Write(b []byte) (n int, err error)
+}
+
 /*
 	Represents a Whisper database file.
 */
 type Whisper struct {
-	file *os.File // TODO: switch bufio.Writer
+	// file *os.File
+	file file
 
 	// Metadata
 	aggregationMethod AggregationMethod
@@ -209,12 +222,18 @@ func CreateWithOptions(path string, retentions Retentions, aggregationMethod Agg
 	if err == nil {
 		return nil, os.ErrExist
 	}
-	file, err := os.Create(path)
+	var file file
+	if options.InMemory {
+		file = newMemFile(path)
+		err = nil
+	} else {
+		file, err = os.Create(path)
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	if options.FLock {
+	if options.FLock && !options.InMemory {
 		if err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
 			file.Close()
 			return nil, err
@@ -312,7 +331,7 @@ func (whisper *Whisper) blockCount(archive *archiveInfo) int {
 	return int(math.Ceil(float64(archive.numberOfPoints)/float64(whisper.pointsPerBlock))) + 1
 }
 
-func allocateDiskSpace(file *os.File, remaining int) error {
+func allocateDiskSpace(file file, remaining int) error {
 	chunkSize := 16384
 	zeros := make([]byte, chunkSize)
 	for remaining > chunkSize {
@@ -366,7 +385,12 @@ func Open(path string) (whisper *Whisper, err error) {
 }
 
 func OpenWithOptions(path string, options *Options) (whisper *Whisper, err error) {
-	file, err := os.OpenFile(path, os.O_RDWR, 0666)
+	var file file
+	if options.InMemory {
+		file = newMemFile(path)
+	} else {
+		file, err = os.OpenFile(path, os.O_RDWR, 0666)
+	}
 	if err != nil {
 		return
 	}
@@ -1450,4 +1474,4 @@ func crc32(data []byte, prev uint32) uint32 {
 	return crc ^ 0xFFFFFFFF
 }
 
-func (whisper *Whisper) File() *os.File { return whisper.file }
+func (whisper *Whisper) File() *os.File { return whisper.file.(*os.File) }

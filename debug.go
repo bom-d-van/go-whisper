@@ -29,7 +29,7 @@ func (whisper *Whisper) CheckIntegrity() {
 			if err := whisper.fileReadAt(buf, int64(arc.blockOffset(block.index))); err != nil {
 				panic(err)
 			}
-			_, _, err := arc.readFromBlock(buf, []dataPoint{}, block.start, block.end)
+			_, _, err := arc.ReadFromBlock(buf, []dataPoint{}, block.start, block.end)
 			if err != nil {
 				panic(err)
 			}
@@ -152,7 +152,7 @@ func (arc *archiveInfo) dumpDataPointsCompressed() {
 			panic(err)
 		}
 
-		dps, _, err := arc.readFromBlock(buf, []dataPoint{}, block.start, block.end)
+		dps, _, err := arc.ReadFromBlock(buf, []dataPoint{}, block.start, block.end)
 		if err != nil {
 			panic(err)
 		}
@@ -193,3 +193,20 @@ func (whisper *Whisper) dumpDataPointsStandard(archive *archiveInfo) {
 		fmt.Printf("%d: %d,% 10v\n", i, p.interval, p.value)
 	}
 }
+
+func GenTestArchive(buf []byte, ret Retention) *archiveInfo {
+	na := archiveInfo{
+		Retention:   ret,
+		offset:      0,
+		blockRanges: make([]blockRange, 1),
+		blockSize:   len(buf),
+		cblock: blockInfo{
+			index:          0,
+			lastByteBitPos: 7,
+			lastByteOffset: 0,
+		},
+	}
+
+	return &na
+}
+func GenDataPointSlice() []dataPoint { return []dataPoint{} }

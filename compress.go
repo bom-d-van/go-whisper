@@ -3,11 +3,15 @@ package whisper
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"math"
 	"math/bits"
 	"os"
 	"sort"
+	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/kr/pretty"
 )
@@ -328,7 +332,7 @@ func (whisper *Whisper) fetchCompressed(start, end int64, archive *archiveInfo) 
 			}
 
 			var err error
-			dst, _, err = archive.readFromBlock(buf, dst, int(start), int(end))
+			dst, _, err = archive.ReadFromBlock(buf, dst, int(start), int(end))
 			if err != nil {
 				return dst, err
 			}
@@ -350,6 +354,7 @@ func (archive *archiveInfo) getBufferRange() (start, end int) {
 	points := archive.bufferSize / PointSize
 	return start, start + points*archive.secondsPerPoint
 }
+
 func (whisper *Whisper) archiveUpdateManyCompressed(archive *archiveInfo, points []*TimeSeriesPoint) error {
 	alignedPoints := alignPoints(archive, points)
 
@@ -473,8 +478,8 @@ func (archive *archiveInfo) appendToBlockAndRotate(dps []dataPoint) error {
 	blockBuffer := make([]byte, len(dps)*(PointSize+extraPointSize)+endOfBlockSize)
 
 	for {
-		offset := archive.cblock.lastByteOffset // lastByteOffset is updated in appendPointsToBlock
-		size, left, rotate := archive.appendPointsToBlock(blockBuffer, dps)
+		offset := archive.cblock.lastByteOffset // lastByteOffset is updated in AppendPointsToBlock
+		size, left, rotate := archive.AppendPointsToBlock(blockBuffer, dps)
 
 		// flush block
 		if size >= len(blockBuffer) {
@@ -542,6 +547,7 @@ func (whisper *Whisper) extendIfNeeded() error {
 				}
 				msg += fmt.Sprintf("%s:%v->%v ", ret, ret.avgCompressedPointSize, avgPointSize)
 				ret.avgCompressedPointSize = avgPointSize
+				arc.stats.extend.pointSize++
 			}
 		}
 
@@ -562,7 +568,7 @@ func (whisper *Whisper) extendIfNeeded() error {
 	nwhisper, err := CreateWithOptions(
 		whisper.file.Name()+".extend", rets,
 		whisper.aggregationMethod, whisper.xFilesFactor,
-		&Options{Compressed: true, PointsPerBlock: DefaultPointsPerBlock},
+		&Options{Compressed: true, PointsPerBlock: DefaultPointsPerBlock, InMemory: whisper.opts.InMemory},
 	)
 	if err != nil {
 		return fmt.Errorf("extend: %s", err)
@@ -578,7 +584,7 @@ func (whisper *Whisper) extendIfNeeded() error {
 			if err := whisper.fileReadAt(buf, int64(archive.blockOffset(block.index))); err != nil {
 				return fmt.Errorf("archives[%d].blocks[%d].file.read: %s", i, block.index, err)
 			}
-			dst, _, err := archive.readFromBlock(buf, []dataPoint{}, block.start, block.end)
+			dst, _, err := archive.ReadFromBlock(buf, []dataPoint{}, block.start, block.end)
 			if err != nil {
 				return fmt.Errorf("archives[%d].blocks[%d].read: %s", i, block.index, err)
 			}
@@ -597,8 +603,13 @@ func (whisper *Whisper) extendIfNeeded() error {
 	whisper.Close()
 	nwhisper.file.Close()
 
-	if err = os.Rename(filename+".extend", filename); err != nil {
-		return fmt.Errorf("extend/rename: %s", err)
+	if whisper.opts.InMemory {
+		whisper.file.(*memFile).data = nwhisper.file.(*memFile).data
+		releaseMemFile(filename + ".extend")
+	} else {
+		if err = os.Rename(filename+".extend", filename); err != nil {
+			return fmt.Errorf("extend/rename: %s", err)
+		}
 	}
 
 	nwhisper, err = OpenWithOptions(filename, whisper.opts)
@@ -607,12 +618,6 @@ func (whisper *Whisper) extendIfNeeded() error {
 
 	return err
 }
-
-// TODO:
-// 	1. review buffer usage in read/write
-// 	2. unify/simplify bits read/write api
-
-// TODO: IMPORTANT: benchmark read/write performances of compresssed and standard whisper
 
 // Timestamp:
 // 1. The block header stores the starting time stamp, t−1,
@@ -650,7 +655,7 @@ func (whisper *Whisper) extendIfNeeded() error {
 // 	    6 bits. Finally store the meaningful bits of the
 // 	    XORed value.
 
-func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written int, left []dataPoint, rotate bool) {
+func (a *archiveInfo) AppendPointsToBlock(buf []byte, ps []dataPoint) (written int, left []dataPoint, rotate bool) {
 	var bw BitsWriter
 	bw.buf = buf
 	bw.bitPos = a.cblock.lastByteBitPos
@@ -693,7 +698,7 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written i
 	}()
 
 	if debugCompress {
-		fmt.Printf("appendPointsToBlock(%s): cblock.index=%d bw.index = %d lastByteOffset = %d blockSize = %d\n", a.Retention, a.cblock.index, bw.index, a.cblock.lastByteOffset, a.blockSize)
+		fmt.Printf("AppendPointsToBlock(%s): cblock.index=%d bw.index = %d lastByteOffset = %d blockSize = %d\n", a.Retention, a.cblock.index, bw.index, a.cblock.lastByteOffset, a.blockSize)
 	}
 
 	// TODO: return error if interval is not monotonically increasing?
@@ -818,7 +823,6 @@ func (a *archiveInfo) appendPointsToBlock(buf []byte, ps []dataPoint) (written i
 				bw.Write(2, 2)
 				bw.Write(mlen, xor>>uint64(ptz))
 				if debugCompress {
-					// fmt.Printf("mlen = %d %b\n", mlen, xor>>uint64(ptz))
 					fmt.Printf("\tsame-length meaningful block: %0s\n", dumpBits(2, 2, uint64(mlen), xor>>uint(ptz)))
 				}
 
@@ -967,7 +971,7 @@ func (bw *BitsWriter) Write(lenb int, data uint64) {
 	}
 }
 
-func (a *archiveInfo) readFromBlock(buf []byte, dst []dataPoint, start, end int) ([]dataPoint, int, error) {
+func (a *archiveInfo) ReadFromBlock(buf []byte, dst []dataPoint, start, end int) ([]dataPoint, int, error) {
 	var br BitsReader
 	br.buf = buf
 	br.bitPos = 7
@@ -1016,9 +1020,6 @@ readloop:
 			skip = 4
 			toRead = 32
 		default:
-			// fmt.Printf("br.current = %+v\n", br.current)
-			// fmt.Printf("br.bitPos = %+v\n", br.bitPos)
-			// fmt.Printf("len(buf) = %+v\n", len(buf))
 			if br.current >= len(buf)-1 {
 				break readloop
 			}
@@ -1326,7 +1327,7 @@ func estimatePointSize(ps []dataPoint, ret *Retention, pointsPerBlock int) float
 			},
 		}
 
-		size, left, _ := na.appendPointsToBlock(buf, ps[i:end])
+		size, left, _ := na.AppendPointsToBlock(buf, ps[i:end])
 		if len(left) > 0 {
 			i += len(ps) - len(left)
 		} else {
@@ -1339,3 +1340,78 @@ func estimatePointSize(ps []dataPoint, ret *Retention, pointsPerBlock int) float
 }
 
 func (whisper *Whisper) IsCompressed() bool { return whisper.compressed }
+
+type memFile struct {
+	name   string
+	data   []byte
+	offset int64
+}
+
+var memFiles sync.Map
+
+func newMemFile(name string) *memFile {
+	val, ok := memFiles.Load(name)
+	if ok {
+		val.(*memFile).offset = 0
+		return val.(*memFile)
+	}
+	var mf memFile
+	mf.name = name
+	memFiles.Store(name, &mf)
+	return &mf
+}
+
+func releaseMemFile(name string) { memFiles.Delete(name) }
+
+func (mf *memFile) Fd() uintptr  { return uintptr(unsafe.Pointer(mf)) }
+func (mf *memFile) Close() error { return nil }
+func (mf *memFile) Name() string { return mf.name }
+
+func (mf *memFile) Seek(offset int64, whence int) (int64, error) {
+	switch whence {
+	case 0:
+		mf.offset = offset
+	case 1:
+		mf.offset += offset
+	case 2:
+		mf.offset = int64(len(mf.data)) + offset
+	}
+	return mf.offset, nil
+}
+
+func (mf *memFile) ReadAt(b []byte, off int64) (n int, err error) {
+	n = copy(b, mf.data[off:])
+	if n < len(b) {
+		err = io.EOF
+	}
+	return
+}
+func (mf *memFile) WriteAt(b []byte, off int64) (n int, err error) {
+	if l := int64(len(mf.data)); l <= off {
+		mf.data = append(mf.data, make([]byte, off-l+1)...)
+	}
+	for l, i := len(mf.data[off:]), 0; i < len(b)-l; i++ {
+		mf.data = append(mf.data, 0)
+	}
+	n = copy(mf.data[off:], b)
+	if n < len(b) {
+		err = io.EOF
+	}
+	return n, nil
+}
+
+func (mf *memFile) Read(b []byte) (n int, err error) {
+	n = copy(b, mf.data[mf.offset:])
+	if n < len(b) {
+		err = io.EOF
+	}
+	mf.offset += int64(n)
+	return
+}
+func (mf *memFile) Write(b []byte) (n int, err error) {
+	n, err = mf.WriteAt(b, mf.offset)
+	mf.offset += int64(n)
+	return n, nil
+}
+
+func (mf *memFile) dumpOnDisk(fpath string) error { return ioutil.WriteFile(fpath, mf.data, 0644) }

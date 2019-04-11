@@ -87,10 +87,10 @@ func TestBlockReadWrite1(t *testing.T) {
 		}
 
 		buf := make([]byte, acv.blockSize)
-		_, left, _ := acv.appendPointsToBlock(buf, input)
+		_, left, _ := acv.AppendPointsToBlock(buf, input)
 
 		points := make([]dataPoint, 0, 200)
-		points, _, err := acv.readFromBlock(buf, points, ts, ts+60*60*60)
+		points, _, err := acv.ReadFromBlock(buf, points, ts, ts+60*60*60)
 		if err != nil {
 			t.Error(err)
 		}
@@ -128,11 +128,11 @@ func TestBlockReadWrite2(t *testing.T) {
 		}
 
 		buf := make([]byte, acv.blockSize)
-		acv.appendPointsToBlock(buf, input[:1])
-		acv.appendPointsToBlock(buf[acv.cblock.lastByteOffset:], input[1:5])
-		acv.appendPointsToBlock(buf[acv.cblock.lastByteOffset:], input[5:])
+		acv.AppendPointsToBlock(buf, input[:1])
+		acv.AppendPointsToBlock(buf[acv.cblock.lastByteOffset:], input[1:5])
+		acv.AppendPointsToBlock(buf[acv.cblock.lastByteOffset:], input[5:])
 
-		points, _, err := acv.readFromBlock(buf, make([]dataPoint, 0, 200), 1544456874, 1544477000)
+		points, _, err := acv.ReadFromBlock(buf, make([]dataPoint, 0, 200), 1544456874, 1544477000)
 		if err != nil {
 			t.Error(err)
 		}
@@ -324,7 +324,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 		},
 		Average,
 		0,
-		&Options{Compressed: true, PointsPerBlock: 7200},
+		&Options{Compressed: true, PointsPerBlock: 7200, InMemory: true},
 	)
 	if err != nil {
 		panic(err)
@@ -338,7 +338,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 		},
 		Average,
 		0,
-		&Options{Compressed: false, PointsPerBlock: 7200},
+		&Options{Compressed: false, PointsPerBlock: 7200, InMemory: true},
 	)
 	if err != nil {
 		panic(err)
@@ -372,11 +372,11 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			limit = rand.Intn(300)
 			statTotalUpdates++
 
-			cwhisper, err = OpenWithOptions(fpath+".cwsp", &Options{})
+			cwhisper, err = OpenWithOptions(fpath+".cwsp", &Options{InMemory: true})
 			if err != nil {
 				t.Fatal(err)
 			}
-			ncwhisper, err = OpenWithOptions(fpath, &Options{})
+			ncwhisper, err = OpenWithOptions(fpath, &Options{InMemory: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -391,7 +391,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 
 			if cwhisper.Extended {
 				for _, a := range cwhisper.archives {
-					fmt.Printf("%s: %d\n", a.Retention, a.totalPoints())
+					t.Logf("extended: %s: %d\n", a.Retention, a.totalPoints())
 				}
 			}
 
@@ -404,17 +404,34 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 		}
 	}
 
-	fmt.Println("statTotalUpdates:", statTotalUpdates)
+	t.Logf("statTotalUpdates: %d\n", statTotalUpdates)
 	for _, a := range cwhisper.archives {
-		fmt.Printf("%s: %d\n", a.Retention, a.totalPoints())
+		t.Logf("%s: %d\n", a.Retention, a.totalPoints())
+	}
+
+	if err := newMemFile(fpath).dumpOnDisk(fpath); err != nil {
+		t.Fatal(err)
+	}
+	if err := newMemFile(fpath + ".cwsp").dumpOnDisk(fpath + ".cwsp"); err != nil {
+		t.Fatal(err)
 	}
 
 	output, err := exec.Command("go", "run", "cmd/verify.go", "-now", fmt.Sprintf("%d", now.Unix()), "-ignore-buffer", fpath, fpath+".cwsp").CombinedOutput()
 	if err != nil {
-		fmt.Println("go", "run", "cmd/verify.go", "-now", fmt.Sprintf("%d", now.Unix()), "-ignore-buffer", fpath, fpath+".cwsp")
+		t.Log("go", "run", "cmd/verify.go", "-now", fmt.Sprintf("%d", now.Unix()), "-ignore-buffer", fpath, fpath+".cwsp")
 		fmt.Fprint(os.Stdout, string(output))
 		t.Fatal(err)
 	}
+
+	std, err := os.Stat(fpath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmp, err := os.Stat(fpath + ".cwsp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("compression ratio: %.2f\n", float64(cmp.Size()*100)/float64(std.Size()))
 }
 
 func TestCompressTo(t *testing.T) {
@@ -664,7 +681,7 @@ func TestReplayFile(t *testing.T) {
 		if err := cwhisper.fileReadAt(buf, int64(archive.blockOffset(block.index))); err != nil {
 			t.Errorf("blocks[%d].file.read: %s", block.index, err)
 		}
-		dst, _, err := archive.readFromBlock(buf, []dataPoint{}, block.start, block.end)
+		dst, _, err := archive.ReadFromBlock(buf, []dataPoint{}, block.start, block.end)
 		if err != nil {
 			t.Errorf("blocks[%d].read: %s", block.index, err)
 		}
