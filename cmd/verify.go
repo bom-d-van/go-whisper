@@ -143,25 +143,31 @@ func main() {
 			}
 		}
 
-		if *verbose {
-			fmt.Printf("  len1 = %d len2 = %d vals1 = %d vals2 = %d\n", len(dps1.Values()), len(dps2.Values()), vals1, vals2)
-		}
+		fmt.Printf("  len1 = %d len2 = %d vals1 = %d vals2 = %d\n", len(dps1.Values()), len(dps2.Values()), vals1, vals2)
 
 		if len(dps1.Values()) != len(dps2.Values()) {
+			bad = true
 			fmt.Printf("  size doesn't match: %d != %d\n", len(dps1.Values()), len(dps2.Values()))
 		}
 		if vals1 != vals2 {
+			bad = true
 			fmt.Printf("  values doesn't match: %d != %d\n", vals1, vals2)
 		}
+		var ptDiff int
 		for i, p1 := range dps1.Values() {
 			if len(dps2.Values()) < i {
 				break
 			}
 			p2 := dps2.Values()[i]
 			if !((math.IsNaN(p1) && math.IsNaN(p2)) || p1 == p2) {
-				fmt.Printf("    %d: %v != %v\n", i, p1, p2)
+				bad = true
+				ptDiff++
+				if *verbose {
+					fmt.Printf("    %d: %v != %v\n", i, p1, p2)
+				}
 			}
 		}
+		fmt.Printf("  point mismatches: %d\n", ptDiff)
 
 		// if diff := cmp.Diff(dps1.Points(), dps2.Points(), cmp.AllowUnexported(whisper.TimeSeries{}), cmpopts.EquateNaNs()); diff != "" {
 		// 	fmt.Println(diff)
