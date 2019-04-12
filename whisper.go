@@ -19,6 +19,7 @@ import (
 )
 
 const (
+	// size constants
 	IntSize         = 4
 	FloatSize       = 4
 	Float64Size     = 8

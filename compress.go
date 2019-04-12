@@ -159,7 +159,7 @@ func (whisper *Whisper) readHeaderCompressed() (err error) {
 	}
 
 	whisper.compVersion = b[offset]
-	offset += 1
+	offset++
 
 	whisper.aggregationMethod = AggregationMethod(unpackInt(b[offset : offset+IntSize]))
 	offset += IntSize
@@ -535,7 +535,7 @@ func (whisper *Whisper) extendIfNeeded() error {
 				break
 			}
 
-			totalBlocks += 1
+			totalBlocks++
 			totalPoints += b.count
 		}
 		if totalPoints > 0 {

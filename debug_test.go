@@ -3,6 +3,7 @@
 package whisper
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -183,4 +184,82 @@ func TestBrokenWhisperFile(t *testing.T) {
 		// continue
 		fmt.Printf("  % 4d %d: %f\n", i, p.interval, p.value)
 	}
+}
+
+func TestReplayFile(t *testing.T) {
+	data, err := os.Open("test_data")
+	if err != nil {
+		panic(err)
+	}
+	var ps []*TimeSeriesPoint
+	if err := json.NewDecoder(data).Decode(&ps); err != nil {
+		panic(err)
+	}
+
+	Now = func() time.Time { return time.Unix(1553545592, 0) }
+	defer func() { Now = func() time.Time { return time.Now() } }()
+
+	fpath := fmt.Sprintf("replay.%d.cwsp", time.Now().Unix())
+	os.Remove(fpath)
+	cwhisper, err := CreateWithOptions(
+		fpath,
+		[]*Retention{
+			{secondsPerPoint: 1, numberOfPoints: 172800},   // 1s:2d
+			{secondsPerPoint: 60, numberOfPoints: 40320},   // 1m:28d
+			{secondsPerPoint: 3600, numberOfPoints: 17520}, // 1h:2y
+		},
+		Sum,
+		0,
+		&Options{Compressed: true, PointsPerBlock: 7200},
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	for i := 0; i < len(ps); i += 300 {
+		// end := i + rand.Intn(300) + 1
+		end := i + 300
+		if end > len(ps) {
+			end = len(ps)
+		}
+		if err := cwhisper.UpdateMany(ps[i:end]); err != nil {
+			panic(err)
+		}
+		// i = end
+	}
+	if err := cwhisper.Close(); err != nil {
+		panic(err)
+	}
+
+	psm := map[int]float64{}
+	for _, p := range ps {
+		psm[p.Time] = p.Value
+	}
+	cwhisper, err = OpenWithOptions(fpath, &Options{})
+	if err != nil {
+		panic(err)
+	}
+	archive := cwhisper.archives[0]
+	var readCount int
+	for _, block := range archive.getSortedBlockRanges() {
+		buf := make([]byte, archive.blockSize)
+		if err := cwhisper.fileReadAt(buf, int64(archive.blockOffset(block.index))); err != nil {
+			t.Errorf("blocks[%d].file.read: %s", block.index, err)
+		}
+		dst, _, err := archive.readFromBlock(buf, []dataPoint{}, block.start, block.end)
+		if err != nil {
+			t.Errorf("blocks[%d].read: %s", block.index, err)
+		}
+		for _, p := range dst {
+			if psm[p.interval] != p.value {
+				t.Errorf("block[%d][%d] = %v != %v", block.index, p.interval, p.value, psm[p.interval])
+			}
+			readCount++
+			delete(psm, p.interval)
+		}
+	}
+
+	// TODO: investigate why there are 17000+ points left and improve
+	fmt.Println("len(psm) =", len(psm))
+	fmt.Println("readCount =", readCount)
 }
