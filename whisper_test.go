@@ -186,7 +186,7 @@ func TestOpenFile(t *testing.T) {
 	path, _, retentions, tearDown := setUpCreate()
 	whisper1, err := Create(path, retentions, Average, 0.5)
 	if err != nil {
-		fmt.Errorf("Failed to create: %v", err)
+		t.Errorf("Failed to create: %v", err)
 	}
 
 	// write some points
@@ -296,7 +296,7 @@ func TestCheckEmpty(t *testing.T) {
 	path, _, retentions, tearDown := setUpCreate()
 	whisper, err = Create(path, retentions, Average, 0.5)
 	if err != nil {
-		fmt.Errorf("Failed to create: %v", err)
+		t.Errorf("Failed to create: %v", err)
 	}
 	defer whisper.Close()
 	now := int(time.Now().Unix())
