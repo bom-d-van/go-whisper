@@ -313,6 +313,12 @@ func TestCompressedWhisperReadWrite2(t *testing.T) {
 
 var fullTest3 = flag.Bool("full-test3", false, "run a full test of TestCompressedWhisperReadWrite3")
 
+// To run a full test of TestCompressedWhisperReadWrite3, it would take about 10
+// minutes, the slowness comes from standard whisper file propagation (around 10
+// times slower and comsume much more memory than compressed format).
+//
+// Parallel is disabled because we need to manipulate Now in order to simulate
+// updates.
 func TestCompressedWhisperReadWrite3(t *testing.T) {
 	inputs := []struct {
 		name      string
