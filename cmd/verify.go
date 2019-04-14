@@ -179,6 +179,13 @@ func main() {
 		// 	bad = true
 		// }
 	}
+	if db1.IsCompressed() {
+		db1.CheckIntegrity()
+	}
+	if db2.IsCompressed() {
+		db2.CheckIntegrity()
+	}
+
 	if bad {
 		os.Exit(1)
 	}
