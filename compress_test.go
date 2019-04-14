@@ -315,13 +315,17 @@ var fullTest3 = flag.Bool("full-test3", false, "run a full test of TestCompresse
 
 func TestCompressedWhisperReadWrite3(t *testing.T) {
 	inputs := []struct {
-		name string
-		gen  func(prevTime time.Time, index int) *TimeSeriesPoint
+		name      string
+		randLimit func() int
+		gen       func(prevTime time.Time, index int) *TimeSeriesPoint
 	}{
 		{
-			name: "simple",
+			name: "random_time",
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
-				return &TimeSeriesPoint{Value: 0, Time: int(prevTime.Add(time.Second).Unix())}
+				return &TimeSeriesPoint{
+					Value: 0,
+					Time:  int(prevTime.Add(time.Duration(rand.Intn(4096)+1) * time.Second).Unix()),
+				}
 			},
 		},
 		{
@@ -334,6 +338,16 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			},
 		},
 		{
+			name: "less_random_time_value",
+			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
+				return &TimeSeriesPoint{
+					Value: 2000.0 + float64(rand.Intn(1000)),
+					Time:  int(prevTime.Add(time.Duration(rand.Intn(60)) * time.Second).Unix()),
+				}
+			},
+		},
+
+		{
 			name: "random_value",
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
 				return &TimeSeriesPoint{
@@ -343,16 +357,8 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			},
 		},
 		{
-			name: "random_time",
-			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
-				return &TimeSeriesPoint{
-					Value: 0,
-					Time:  int(prevTime.Add(time.Duration(rand.Intn(4096)+1) * time.Second).Unix()),
-				}
-			},
-		},
-		{
-			name: "random_value2",
+			name:      "random_value2",
+			randLimit: func() int { return rand.Intn(300) + (60 * 60 * 24) },
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
 				return &TimeSeriesPoint{
 					Value: 2000.0 + float64(rand.Intn(1000)),
@@ -361,12 +367,9 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			},
 		},
 		{
-			name: "less_random_time_value",
+			name: "simple",
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
-				return &TimeSeriesPoint{
-					Value: 2000.0 + float64(rand.Intn(1000)),
-					Time:  int(prevTime.Add(time.Duration(rand.Intn(60)) * time.Second).Unix()),
-				}
+				return &TimeSeriesPoint{Value: 0, Time: int(prevTime.Add(time.Second).Unix())}
 			},
 		},
 
@@ -386,8 +389,13 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 	inMemory := true
 	for i := range inputs {
 		input := inputs[i]
+		if input.randLimit == nil {
+			input.randLimit = func() int { return rand.Intn(300) }
+		}
+
 		t.Run(input.name, func(t *testing.T) {
-			t.Parallel()
+			// can't run tests parallel here because they modify Now
+			// t.Parallel()
 			t.Logf("case: %s\n", input.name)
 
 			fpath := fmt.Sprintf("tmp/test3_%s.wsp", input.name)
@@ -433,8 +441,8 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 
 			// var psArr [][]*TimeSeriesPoint
 			var ps []*TimeSeriesPoint
-			var limit = rand.Intn(300)
-			var statTotalUpdates, extended int
+			var limit = input.randLimit()
+			var statTotalUpdates, extended, totalPoints int
 			firstArchiveBound := cwhisper.Retentions()[0].MaxRetention()
 			for i := 0; i < total; i++ {
 				p := input.gen(start, i)
@@ -448,10 +456,9 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 				if toAppend || len(ps) >= limit || start.After(now) {
 					// fmt.Printf("%d toAppend = %v\r", start.Unix(), len(ps))
 					// fmt.Printf("progress: %.2f%% len(points): %d\r", 100-float64(now.Unix()-start.Unix())*100/float64(total), len(ps))
-
-					// now = start
-					limit = rand.Intn(300)
+					limit = input.randLimit()
 					statTotalUpdates++
+					totalPoints += len(ps)
 					// psArr = append(psArr, ps)
 
 					cwhisper, err = OpenWithOptions(fpath+".cwsp", &Options{InMemory: inMemory})
@@ -492,7 +499,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 				}
 			}
 
-			t.Logf("statTotalUpdates: %d extended: %d\n", statTotalUpdates, extended)
+			t.Logf("statTotalUpdates: %d extended: %d totalPoints: %d\n", statTotalUpdates, extended, totalPoints)
 			// for _, a := range cwhisper.archives {
 			// 	t.Logf("%s: %d\n", a.Retention, a.totalPoints())
 			// }
@@ -534,6 +541,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 				t.Error(err)
 			}
 			t.Logf("compression ratio %s: %.2f%%\n", input.name, float64(cmp.Size()*100)/float64(std.Size()))
+
 			return
 		})
 	}

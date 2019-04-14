@@ -1341,6 +1341,8 @@ func estimatePointSize(ps []dataPoint, ret *Retention, pointsPerBlock int) float
 
 func (whisper *Whisper) IsCompressed() bool { return whisper.compressed }
 
+// memFile is simple implementation of in-memory file system.
+// Close doesn't release the file from memory, need to call releaseMemFile.
 type memFile struct {
 	name   string
 	data   []byte
@@ -1364,8 +1366,8 @@ func newMemFile(name string) *memFile {
 func releaseMemFile(name string) { memFiles.Delete(name) }
 
 func (mf *memFile) Fd() uintptr  { return uintptr(unsafe.Pointer(mf)) }
-func (mf *memFile) Close() error { return nil }
 func (mf *memFile) Name() string { return mf.name }
+func (mf *memFile) Close() error { return nil }
 
 func (mf *memFile) Seek(offset int64, whence int) (int64, error) {
 	switch whence {
