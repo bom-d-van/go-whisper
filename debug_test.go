@@ -160,7 +160,7 @@ func TestBrokenWhisperFile(t *testing.T) {
 	blockBuffer := make([]byte, len(points)*(PointSize+extraPointSize)+endOfBlockSize)
 
 	// debugCompress = true
-	size, left, rotate := archive.appendPointsToBlock(blockBuffer, points)
+	size, left, rotate := archive.AppendPointsToBlock(blockBuffer, points)
 	log.Printf("size = %+v\n", size)
 	log.Printf("len(left) = %+v\n", len(left))
 	log.Printf("rotate = %+v\n", rotate)
@@ -174,7 +174,7 @@ func TestBrokenWhisperFile(t *testing.T) {
 	// }
 
 	var dst []dataPoint
-	dst2, _, err := archive.readFromBlock(blockBuffer, dst, start, end)
+	dst2, _, err := archive.ReadFromBlock(blockBuffer, dst, start, end)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestReplayFile(t *testing.T) {
 		if err := cwhisper.fileReadAt(buf, int64(archive.blockOffset(block.index))); err != nil {
 			t.Errorf("blocks[%d].file.read: %s", block.index, err)
 		}
-		dst, _, err := archive.readFromBlock(buf, []dataPoint{}, block.start, block.end)
+		dst, _, err := archive.ReadFromBlock(buf, []dataPoint{}, block.start, block.end)
 		if err != nil {
 			t.Errorf("blocks[%d].read: %s", block.index, err)
 		}
@@ -262,4 +262,115 @@ func TestReplayFile(t *testing.T) {
 	// TODO: investigate why there are 17000+ points left and improve
 	fmt.Println("len(psm) =", len(psm))
 	fmt.Println("readCount =", readCount)
+}
+
+func TestReplayFile2(t *testing.T) {
+	data, err := os.Open("test3.json")
+	if err != nil {
+		panic(err)
+	}
+	var psArr [][]*TimeSeriesPoint
+	if err := json.NewDecoder(data).Decode(&psArr); err != nil {
+		panic(err)
+	}
+
+	fpath := fmt.Sprintf("test3_replay.wsp")
+	os.Remove(fpath)
+	os.Remove(fpath + ".cwsp")
+
+	inMemory := true
+	cwhisper, err := CreateWithOptions(
+		fpath+".cwsp",
+		[]*Retention{
+			{secondsPerPoint: 1, numberOfPoints: 172800},   // 1s:2d
+			{secondsPerPoint: 60, numberOfPoints: 40320},   // 1m:28d
+			{secondsPerPoint: 3600, numberOfPoints: 17520}, // 1h:2y
+		},
+		Average,
+		0,
+		&Options{Compressed: true, PointsPerBlock: 7200, InMemory: inMemory},
+	)
+	if err != nil {
+		panic(err)
+	}
+	ncwhisper, err := CreateWithOptions(
+		fpath,
+		[]*Retention{
+			{secondsPerPoint: 1, numberOfPoints: 172800},   // 1s:2d
+			{secondsPerPoint: 60, numberOfPoints: 40320},   // 1m:28d
+			{secondsPerPoint: 3600, numberOfPoints: 17520}, // 1h:2y
+		},
+		Average,
+		0,
+		&Options{Compressed: false, PointsPerBlock: 7200, InMemory: inMemory},
+	)
+	if err != nil {
+		panic(err)
+	}
+	cwhisper.Close()
+	ncwhisper.Close()
+
+	var start time.Time
+	Now = func() time.Time { return start }
+	defer func() { Now = func() time.Time { return time.Now() } }()
+
+	for i, ps := range psArr {
+		log.Printf("batch = %+v\n", i)
+		log.Printf("len(ps) = %+v\n", len(ps))
+		start = time.Unix(int64(ps[len(ps)-1].Time), 0)
+		cwhisper, err = OpenWithOptions(fpath+".cwsp", &Options{InMemory: inMemory})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ncwhisper, err = OpenWithOptions(fpath, &Options{InMemory: inMemory})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := cwhisper.UpdateMany(ps); err != nil {
+			t.Fatal(err)
+		}
+		if err := ncwhisper.UpdateMany(ps); err != nil {
+			t.Fatal(err)
+		}
+
+		if cwhisper.Extended {
+			for _, a := range cwhisper.archives {
+				t.Logf("extended: %s: %v\n", a.Retention, a.avgCompressedPointSize)
+			}
+		}
+
+		if err := cwhisper.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := ncwhisper.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if inMemory {
+		if err := newMemFile(fpath).dumpOnDisk(fpath); err != nil {
+			t.Fatal(err)
+		}
+		if err := newMemFile(fpath + ".cwsp").dumpOnDisk(fpath + ".cwsp"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Log("go", "run", "cmd/verify.go", "-v", "-now", fmt.Sprintf("%d", start.Unix()), "-ignore-buffer", fpath, fpath+".cwsp")
+	output, err := exec.Command("go", "run", "cmd/verify.go", "-now", fmt.Sprintf("%d", start.Unix()), "-ignore-buffer", fpath, fpath+".cwsp").CombinedOutput()
+	if err != nil {
+		t.Log(string(output))
+		t.Error(err)
+	}
+
+	std, err := os.Stat(fpath)
+	if err != nil {
+		t.Error(err)
+	}
+	cmp, err := os.Stat(fpath + ".cwsp")
+	if err != nil {
+		t.Error(err)
+	}
+	t.Logf("compression ratio: %.2f\n", float64(cmp.Size()*100)/float64(std.Size()))
 }

@@ -2,6 +2,7 @@ package whisper
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"math"
@@ -310,6 +311,8 @@ func TestCompressedWhisperReadWrite2(t *testing.T) {
 	}
 }
 
+var fullTest3 = flag.Bool("full-test3", false, "run a full test of TestCompressedWhisperReadWrite3")
+
 func TestCompressedWhisperReadWrite3(t *testing.T) {
 	inputs := []struct {
 		name string
@@ -322,16 +325,16 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			},
 		},
 		{
-			name: "complex",
+			name: "random_time_value",
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
 				return &TimeSeriesPoint{
 					Value: rand.NormFloat64(),
-					Time:  int(prevTime.Add(time.Duration(rand.Intn(4096)) * time.Second).Unix()),
+					Time:  int(prevTime.Add(time.Duration(rand.Intn(4096)+1) * time.Second).Unix()),
 				}
 			},
 		},
 		{
-			name: "complex_value",
+			name: "random_value",
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
 				return &TimeSeriesPoint{
 					Value: rand.NormFloat64(),
@@ -340,29 +343,29 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			},
 		},
 		{
-			name: "complex_time",
+			name: "random_time",
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
 				return &TimeSeriesPoint{
 					Value: 0,
-					Time:  int(prevTime.Add(time.Duration(rand.Intn(4096)) * time.Second).Unix()),
+					Time:  int(prevTime.Add(time.Duration(rand.Intn(4096)+1) * time.Second).Unix()),
 				}
 			},
 		},
 		{
-			name: "complex_value2",
+			name: "random_value2",
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
 				return &TimeSeriesPoint{
-					Value: 2000.0 + float64(rand.Intn(100000))/100.0,
+					Value: 2000.0 + float64(rand.Intn(1000)),
 					Time:  int(prevTime.Add(time.Second).Unix()),
 				}
 			},
 		},
 		{
-			name: "medium",
+			name: "less_random_time_value",
 			gen: func(prevTime time.Time, index int) *TimeSeriesPoint {
 				return &TimeSeriesPoint{
-					Value: 2000.0 + float64(rand.Intn(100000))/100.0,
-					Time:  int(prevTime.Add(time.Duration(rand.Intn(300)) * time.Second).Unix()),
+					Value: 2000.0 + float64(rand.Intn(1000)),
+					Time:  int(prevTime.Add(time.Duration(rand.Intn(60)) * time.Second).Unix()),
 				}
 			},
 		},
@@ -379,13 +382,15 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 		// })
 	}
 
+	os.MkdirAll("tmp", 0755)
+	inMemory := true
 	for i := range inputs {
 		input := inputs[i]
 		t.Run(input.name, func(t *testing.T) {
 			t.Parallel()
 			t.Logf("case: %s\n", input.name)
 
-			fpath := fmt.Sprintf("test3_%s.wsp", input.name)
+			fpath := fmt.Sprintf("tmp/test3_%s.wsp", input.name)
 			os.Remove(fpath)
 			os.Remove(fpath + ".cwsp")
 
@@ -398,7 +403,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 				},
 				Average,
 				0,
-				&Options{Compressed: true, PointsPerBlock: 7200, InMemory: true},
+				&Options{Compressed: true, PointsPerBlock: 7200, InMemory: inMemory},
 			)
 			if err != nil {
 				panic(err)
@@ -412,7 +417,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 				},
 				Average,
 				0,
-				&Options{Compressed: false, PointsPerBlock: 7200, InMemory: true},
+				&Options{Compressed: false, PointsPerBlock: 7200, InMemory: inMemory},
 			)
 			if err != nil {
 				panic(err)
@@ -421,75 +426,103 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			ncwhisper.Close()
 
 			var now = time.Now()
-			var start = now.Add(time.Hour * 24 * 365 * -2)
+			var total = 60*60*24*365*2 + 37
+			var start = now.Add(time.Second * time.Duration(total) * -1)
 			Now = func() time.Time { return start }
 			defer func() { Now = func() time.Time { return time.Now() } }()
 
+			// var psArr [][]*TimeSeriesPoint
 			var ps []*TimeSeriesPoint
 			var limit = rand.Intn(300)
-			var statTotalUpdates int
-			for i := 0; i < 60*60*24*365*2; i++ {
+			var statTotalUpdates, extended int
+			firstArchiveBound := cwhisper.Retentions()[0].MaxRetention()
+			for i := 0; i < total; i++ {
 				p := input.gen(start, i)
-				ps = append(ps, p)
-				start = time.Unix(int64(p.Time), 0)
+				var toAppend = true
+				if len(ps) == 0 || p.Time-ps[0].Time < firstArchiveBound {
+					ps = append(ps, p)
+					start = time.Unix(int64(p.Time), 0)
+					toAppend = false
+				}
 
-				if len(ps) >= limit || start.After(now) {
+				if toAppend || len(ps) >= limit || start.After(now) {
+					// fmt.Printf("%d toAppend = %v\r", start.Unix(), len(ps))
+					// fmt.Printf("progress: %.2f%% len(points): %d\r", 100-float64(now.Unix()-start.Unix())*100/float64(total), len(ps))
+
 					// now = start
 					limit = rand.Intn(300)
 					statTotalUpdates++
+					// psArr = append(psArr, ps)
 
-					cwhisper, err = OpenWithOptions(fpath+".cwsp", &Options{InMemory: true})
+					cwhisper, err = OpenWithOptions(fpath+".cwsp", &Options{InMemory: inMemory})
 					if err != nil {
 						t.Fatal(err)
 					}
-					ncwhisper, err = OpenWithOptions(fpath, &Options{InMemory: true})
-					if err != nil {
-						t.Fatal(err)
-					}
-
 					if err := cwhisper.UpdateMany(ps); err != nil {
 						t.Fatal(err)
 					}
-					if err := ncwhisper.UpdateMany(ps); err != nil {
-						t.Fatal(err)
-					}
-					ps = ps[:0]
-
-					// if cwhisper.Extended {
-					// 	for _, a := range cwhisper.archives {
-					// 		t.Logf("extended: %s: %d\n", a.Retention, a.totalPoints())
-					// 	}
-					// }
-
 					if err := cwhisper.Close(); err != nil {
 						t.Fatal(err)
 					}
-					if err := ncwhisper.Close(); err != nil {
-						t.Fatal(err)
+
+					if cwhisper.Extended {
+						// for _, a := range cwhisper.archives {
+						// 	t.Logf("extended: %s: %d\n", a.Retention, a.totalPoints())
+						// }
+						extended++
 					}
+
+					if *fullTest3 {
+						ncwhisper, err = OpenWithOptions(fpath, &Options{InMemory: inMemory})
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := ncwhisper.UpdateMany(ps); err != nil {
+							t.Fatal(err)
+						}
+						if err := ncwhisper.Close(); err != nil {
+							t.Fatal(err)
+						}
+					}
+
+					ps = ps[:0]
 				}
 				if start.After(now) {
 					break
 				}
 			}
 
-			// t.Logf("statTotalUpdates: %d\n", statTotalUpdates)
+			t.Logf("statTotalUpdates: %d extended: %d\n", statTotalUpdates, extended)
 			// for _, a := range cwhisper.archives {
 			// 	t.Logf("%s: %d\n", a.Retention, a.totalPoints())
 			// }
 
-			if err := newMemFile(fpath).dumpOnDisk(fpath); err != nil {
-				t.Fatal(err)
-			}
-			if err := newMemFile(fpath + ".cwsp").dumpOnDisk(fpath + ".cwsp"); err != nil {
-				t.Fatal(err)
+			if inMemory {
+				if err := newMemFile(fpath).dumpOnDisk(fpath); err != nil {
+					t.Fatal(err)
+				}
+				if err := newMemFile(fpath + ".cwsp").dumpOnDisk(fpath + ".cwsp"); err != nil {
+					t.Fatal(err)
+				}
 			}
 
-			t.Log("go", "run", "cmd/verify.go", "-now", fmt.Sprintf("%d", now.Unix()), "-ignore-buffer", fpath, fpath+".cwsp")
-			output, err := exec.Command("go", "run", "cmd/verify.go", "-now", fmt.Sprintf("%d", now.Unix()), "-ignore-buffer", fpath, fpath+".cwsp").CombinedOutput()
-			if err != nil {
-				t.Log(string(output))
-				t.Error(err)
+			// {
+			// 	data, err := json.Marshal(psArr)
+			// 	if err != nil {
+			// 		panic(err)
+			// 	}
+			// 	if err := ioutil.WriteFile("test3.json", data, 0644); err != nil {
+			// 		panic(err)
+			// 	}
+			// }
+
+			if *fullTest3 {
+				t.Log("go", "run", "cmd/verify.go", "-v", "-now", fmt.Sprintf("%d", now.Unix()), fpath, fpath+".cwsp")
+				output, err := exec.Command("go", "run", "cmd/verify.go", "-now", fmt.Sprintf("%d", now.Unix()), fpath, fpath+".cwsp").CombinedOutput()
+				if err != nil {
+					t.Log(string(output))
+					t.Error(err)
+				}
 			}
 
 			std, err := os.Stat(fpath)
@@ -500,7 +533,7 @@ func TestCompressedWhisperReadWrite3(t *testing.T) {
 			if err != nil {
 				t.Error(err)
 			}
-			t.Logf("compression ratio: %.2f\n", float64(cmp.Size()*100)/float64(std.Size()))
+			t.Logf("compression ratio %s: %.2f%%\n", input.name, float64(cmp.Size()*100)/float64(std.Size()))
 			return
 		})
 	}

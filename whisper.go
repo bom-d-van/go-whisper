@@ -1461,6 +1461,7 @@ func mod(a, b int) int {
 	return a - (b * int(math.Floor(float64(a)/float64(b))))
 }
 
+// TODO: optmize with assembly
 // from https://create.stephan-brumme.com/crc32/
 func crc32(data []byte, prev uint32) uint32 {
 	const polynomial uint32 = 0xEDB88320

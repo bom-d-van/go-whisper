@@ -22,6 +22,7 @@ func main() {
 	ignoreBuffer := flag.Bool("ignore-buffer", false, "ignore points in buffer that haven't been propagated")
 	quarantinesRaw := flag.String("quarantines", "", "ignore data started from this point. e.g. 2019-02-21,2019-02-22")
 	verbose := flag.Bool("verbose", false, "be overly and nicely talkive")
+	strict := flag.Bool("strict", false, "exit 1 whenever there are discrepancies between between the files")
 	flag.BoolVar(verbose, "v", false, "be overly and nicely talkive")
 	flag.Parse()
 
@@ -97,7 +98,7 @@ func main() {
 
 		wg.Wait()
 
-		if *ignoreBuffer && index < len(db1.Retentions())-1 {
+		if *ignoreBuffer {
 			{
 				vals := dps1.Values()
 				vals[len(vals)-1] = math.NaN()
@@ -151,7 +152,7 @@ func main() {
 		}
 		if vals1 != vals2 {
 			bad = true
-			fmt.Printf("  values doesn't match: %d != %d\n", vals1, vals2)
+			fmt.Printf("  values doesn't match: %d != %d (%d)\n", vals1, vals2, vals1-vals2)
 		}
 		var ptDiff int
 		for i, p1 := range dps1.Values() {
@@ -163,11 +164,14 @@ func main() {
 				bad = true
 				ptDiff++
 				if *verbose {
-					fmt.Printf("    %d: %v != %v\n", i, p1, p2)
+					fmt.Printf("    %d: %d %v != %v\n", i, dps1.FromTime()+i*ret.SecondsPerPoint(), p1, p2)
 				}
 			}
 		}
 		fmt.Printf("  point mismatches: %d\n", ptDiff)
+		if ptDiff <= 2 && !*strict {
+			bad = false
+		}
 
 		// if diff := cmp.Diff(dps1.Points(), dps2.Points(), cmp.AllowUnexported(whisper.TimeSeries{}), cmpopts.EquateNaNs()); diff != "" {
 		// 	fmt.Println(diff)
